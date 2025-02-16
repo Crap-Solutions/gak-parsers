@@ -86,7 +86,6 @@ def draw_graph(db_file):
         cur = conn.execute("SELECT * FROM ENTRIES WHERE MATCH=?",
                            (event['id'],))
         entries = cur.fetchall()
-        info = []
         hours = []
         sold = []
         for entry in entries:
@@ -99,11 +98,33 @@ def draw_graph(db_file):
             h_diff = (event['time']-tickets['time']).total_seconds() / 3600
             tickets['diff'] = h_diff
             hours.append(h_diff)
+            # cup correct - to delete:
+            if event['id'] == "456e9a8a-ce64-4580-b9e0-3405a810c696":
+                if tickets['sold'] >= 2302:
+                    tickets['sold'] = tickets['sold'] - 1939
+            # fix Horn at home - to delete:
+            if event['id'] == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
+                if tickets['sold'] >= 5100 and tickets['diff'] > 74.20:
+                    tickets['sold'] = tickets['sold'] - 285
+            # fix KSV at home - to delete:
+            if event['id'] == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
+                # if tickets['sold'] >= 5400:
+                    # tickets['sold'] = tickets['sold'] - 285
+                if tickets['diff'] < 96.35:
+                    tickets['sold'] = tickets['sold'] + 296 + 285
+                    # if tickets['diff'] < 95:
+                    #     tickets['sold'] = tickets['sold'] - 296
+                    # if tickets['diff'] < 94.70:
+                    #     tickets['sold'] = tickets['sold'] + 296
+                    # if tickets['diff'] < 94.50:
+                    #     tickets['sold'] = tickets['sold'] - 296
+                if tickets['diff'] < 49.8:
+                    tickets['sold'] = tickets['sold'] + 2333
             sold.append(tickets['sold'])
-            info.append(tickets)
 
         plt.plot(hours, sold, label=event['title'])
 
+    plt.gca().set_xlim([0, 600])
     plt.gca().invert_xaxis()
     plt.gca().xaxis.get_major_locator().set_params(integer=True)
     plt.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='small')
@@ -170,8 +191,11 @@ def main(db_file):
     # -236 (sector 18); not selling (VIP?)
     # -156 (sector 18 VIP); sold out (?)
     # mx = 5619 - 581 - 571 - 416 - 236 - 156
-    # vip_cnt = 65 + 60 + 63 + 65 + 60 + 156 + 236
+    # vip_cnt = 65 + 60 + 63 + 65 + 60 + 156 + 236 = 705
 
+    # sector 3 412
+    # sector 4 286 + 21 + 25 + 24 = 356
+    # sector 5 416 + 2* 16 + 2* 15 + 8 = 486
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
