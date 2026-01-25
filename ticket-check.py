@@ -76,8 +76,11 @@ def draw_graph(db_file):
         events[idx] = event
 
     plt.style.use('tableau-colorblind10')
-    plt.xlabel("hours until game")
-    plt.ylabel("tickets sold (online available)")
+    plt.figure(figsize=(10, 6))
+    plt.title("Ticket Sales Over Time")
+    plt.xlabel("Hours Until Match")
+    plt.ylabel("Tickets Sold (Online Available)")
+    plt.grid(True, linestyle='--', alpha=0.7)
 
     for event in events:
         cur = conn.execute("SELECT * FROM ENTRIES WHERE MATCH=?",
@@ -103,9 +106,10 @@ def draw_graph(db_file):
 
     plt.gca().invert_xaxis()
     plt.gca().xaxis.get_major_locator().set_params(integer=True)
-    plt.legend()
+    plt.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='small')
+    plt.tight_layout()
     tmpfile = io.BytesIO()
-    plt.savefig(tmpfile)
+    plt.savefig(tmpfile, format='png')
     img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
 
     plt.close()
