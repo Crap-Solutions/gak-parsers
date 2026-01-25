@@ -8,3 +8,13 @@ token.json
 # Database files
 *.db
 *.db.*
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
