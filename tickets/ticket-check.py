@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.11
-import sys
-import os
+import argparse
 import io
+from pathlib import Path
 import sqlite3
 import datetime
 import base64
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 
 def init_db(db_file):
-    conn = sqlite3.connect(db_file)
+    conn = sqlite3.connect(str(db_file))
     conn.execute('''
     CREATE TABLE IF NOT EXISTS EVENTS
     (
@@ -49,8 +49,8 @@ def update_db(conn, event, entry):
     return
 
 
-def draw_graph(db_file):
-    conn = sqlite3.connect('file:' + db_file + '?mode=ro', uri=True)
+def draw_graph(db_path):
+    conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
     # select highest sold game
     # select last game
     # select future games
@@ -138,14 +138,32 @@ def draw_graph(db_file):
     return img
 
 
-def main(db_file):
-    conn = init_db(db_file)
+def main():
+    parser = argparse.ArgumentParser(description='Track GAK ticket sales and generate HTML report')
+    parser.add_argument('--db', default='data/ticket.db',
+                        help='Path to SQLite database (default: data/ticket.db)')
+    parser.add_argument('--output', default='output/index.html',
+                        help='Output HTML file path (default: output/index.html)')
+
+    args = parser.parse_args()
+
+    # Ensure data directory exists
+    db_path = Path(args.db)
+    if not db_path.parent.exists():
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Ensure output directory exists
+    out_path = Path(args.output)
+    if not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = init_db(str(db_path))
     base_url = "https://ticket.grazerak.at/backend/events/"
     events_ep = "futurePublishedEvents"
 
-    cur_path = os.path.dirname(os.path.abspath(__file__)) + '/'
-    templ_path = cur_path + "templates/"
-    jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(templ_path))
+    cur_path = Path(__file__).parent
+    templ_path = cur_path / "templates"
+    jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(str(templ_path)))
     ticket_tmpl = jenv.get_template("ticket-html.tmpl")
 
     events = []
@@ -173,8 +191,12 @@ def main(db_file):
     conn.commit()
     conn.close()
 
-    img = draw_graph(db_file)
-    print(ticket_tmpl.render(events=events, img=img))
+    img = draw_graph(str(db_path))
+    html_content = ticket_tmpl.render(events=events, img=img)
+
+    # Write to output file
+    out_path.write_text(html_content, encoding='utf-8')
+    print(f"Generated ticket report: {out_path}")
 
     return
 
@@ -198,7 +220,4 @@ def main(db_file):
     # sector 5 416 + 2* 16 + 2* 15 + 8 = 486
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(sys.argv[0] + " <db_file>")
-        sys.exit(-1)
-    main(sys.argv[1])
+    main()
