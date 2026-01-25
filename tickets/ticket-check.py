@@ -196,7 +196,7 @@ def main():
 
     # Write to output file
     out_path.write_text(html_content, encoding='utf-8')
-    print(f"Generated ticket report: {out_path}")
+    # print(f"Generated ticket report: {out_path}")
 
     return
 
