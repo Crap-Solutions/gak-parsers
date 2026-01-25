@@ -9,14 +9,12 @@ from datetime import datetime
 
 def get_table(url):
     dataset = requests.get(url).json()
-    table_data = dataset['Tabelle']['Runden']['Runde']['Bewerb']
-    table_data = table_data['Tabelle'][2]['Platz']
 
     table = []
-    for ds in table_data:
+    for ds in dataset:
         entry = {}
-        entry['name'] = ds['Name']
-        entry['points'] = ds['Punkte']
+        entry['name'] = ds['teamName']
+        entry['points'] = ds['points']
         table.append(entry)
 
     return table
@@ -112,8 +110,7 @@ def main():
     sidebar_tmpl.globals['timestamp'] = timestamp
     gameplan_tmpl = jenv.get_template("gameplan.tmpl")
     gameplan_tmpl.globals['timestamp'] = timestamp
-    table_url = "https://www.2liga.at/fileadmin/json/Tabellen/" + \
-                "Tabelle_EL.json"
+    table_url = "https://www.grazerak.at/api/table/117"
     table = get_table(table_url)
 
     gameplan_url = "https://www.grazerak.at/api/fixtures/0/1"
