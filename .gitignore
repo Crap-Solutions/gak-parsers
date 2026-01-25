@@ -1,4 +1,10 @@
-*.db
-*.db.*
+# Ignore build/outputs
+output/
+
+# Credentials - use ~/.config/gak-parsers/ instead
 credentials.json
 token.json
+
+# Database files
+*.db
+*.db.*
