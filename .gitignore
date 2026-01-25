@@ -1,5 +1,8 @@
 # Ignore build/outputs
 output/
+reddit/output/
+tickets/output/
+tippspiel/output/
 
 # Credentials - use ~/.config/gak-parsers/ instead
 credentials.json
