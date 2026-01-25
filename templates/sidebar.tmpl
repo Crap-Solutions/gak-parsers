@@ -1,9 +1,9 @@
-Tabelle 2. Liga
+Tabelle Bundesliga
 -
 \# | Team | Points
 :-:|---|:-:
 {% for entry in table -%}
-{% if entry['name'] == 'Grazer AK 1902' -%}
+{% if entry['name'] == 'Grazer AK' -%}
 **{{loop.index}}** | **{{entry['name']}}** | **{{entry['points']}}**
 {% else -%}
 {{loop.index}} | {{entry['name']}} | {{entry['points']}}
