@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.11
 from __future__ import print_function
 
-import os.path
+from pathlib import Path
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -11,6 +11,10 @@ from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+
+# Config directory outside repo
+CONFIG_DIR = Path.home() / ".config" / "gak-parsers"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # The ID and range of a sample spreadsheet.
 SAMPLE_SPREADSHEET_ID = '18mhujvRfyFWSqTzGEnfpsYz4cPkajNeGVVAhwkhc_NI'
@@ -70,20 +74,19 @@ def main():
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    cur_path = os.path.dirname(os.path.abspath(__file__)) + '/'
-    if os.path.exists(cur_path + 'token.json'):
-        creds = Credentials.from_authorized_user_file(cur_path + 'token.json',
-                                                      SCOPES)
+    creds_path = CONFIG_DIR / 'token.json'
+    if creds_path.exists():
+        creds = Credentials.from_authorized_user_file(str(creds_path), SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                cur_path + 'credentials.json', SCOPES)
+                str(CONFIG_DIR / 'credentials.json'), SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open(cur_path + 'token.json', 'w') as token:
+        with open(str(creds_path), 'w') as token:
             token.write(creds.to_json())
 
     try:
