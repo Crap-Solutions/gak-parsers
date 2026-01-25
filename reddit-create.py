@@ -110,7 +110,7 @@ def main():
     sidebar_tmpl.globals['timestamp'] = timestamp
     gameplan_tmpl = jenv.get_template("gameplan.tmpl")
     gameplan_tmpl.globals['timestamp'] = timestamp
-    table_url = "https://www.grazerak.at/api/table/117"
+    table_url = "https://www.grazerak.at/api/table/177"
     table = get_table(table_url)
 
     gameplan_url = "https://www.grazerak.at/api/fixtures/0/1"
