@@ -3,15 +3,45 @@
 <head>
 <meta http-equiv="refresh" content="300">
 <title>GAK ticket watch</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background-color: #f4f4f4;
+        color: #333;
+        margin: 0;
+        padding: 20px;
+    }
+    h1 {
+        color: #d9534f;
+    }
+    .event {
+        background-color: #fff;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 15px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .event p {
+        margin: 5px 0;
+    }
+    img {
+        display: block;
+        margin: 20px auto;
+        max-width: 100%;
+        height: auto;
+    }
+</style>
 </head>
 <body>
 {% for event in events %}
-<h1>{{event["title"]}}</h1>
-<p>Available: {{event["avail"]}}</p>
-<p>Sold (w/o Sponsors, VIP, etc.): {{event["sold"]}}</p>
-<p>Sold (w/o est. Season tickets, Sponsors, VIP, etc.): {{event["sold"] - 2282}}</p>
-<p>Sold (w est. Sponsors, VIP, etc.): {{event["sold"] + 793}}</p>
-<br>
+<div class="event">
+    <h1>{{event["title"]}}</h1>
+    <p>Available: {{event["avail"]}}</p>
+    <p>Sold (w/o Sponsors, VIP, etc.): {{event["sold"] + 2333 + 285 + 296}}</p>
+    <p>Sold (w/o est. Season tickets, Sponsors, VIP, etc.): {{event["sold"] - 2864}}</p>
+    <p>Sold (w est. Sponsors, VIP, etc.): {{event["sold"] + 393 + 2333 + 285 + 296}}</p>
+</div>
 {% endfor %}
 
 <img src='data:image/png;base64, {{img}}'/>
