@@ -1,1 +1,3 @@
-output/
+# Ignore all files in output/, but track the directory
+output/*
+!output/.gitignore
