@@ -101,6 +101,22 @@ def generate_empty_html(message="No upcoming events found"):
 </html>'''
 
 
+def apply_ticket_corrections(event_id, tickets_sold, h_diff):
+    """Apply data corrections for known ticket reporting issues."""
+    if event_id == "456e9a8a-ce64-4580-b9e0-3405a810c696":
+        if tickets_sold >= 2302:
+            tickets_sold = tickets_sold - 1939
+    if event_id == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
+        if tickets_sold >= 5100 and h_diff > 74.20:
+            tickets_sold = tickets_sold - 285
+    if event_id == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
+        if h_diff < 96.35:
+            tickets_sold = tickets_sold + 296 + 285
+        if h_diff < 49.8:
+            tickets_sold = tickets_sold + 2333
+    return tickets_sold
+
+
 def generate_mini_graph(event_id, event_time, db_path):
     """Generate mini graph for a single event. Returns base64-encoded PNG or None."""
     try:
@@ -124,18 +140,7 @@ def generate_mini_graph(event_id, event_time, db_path):
                 h_diff = (event_time_naive - tickets_time).total_seconds() / 3600
 
                 # Apply corrections
-                tickets_sold = entry[1]
-                if event_id == "456e9a8a-ce64-4580-b9e0-3405a810c696":
-                    if tickets_sold >= 2302:
-                        tickets_sold = tickets_sold - 1939
-                if event_id == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
-                    if tickets_sold >= 5100 and h_diff > 74.20:
-                        tickets_sold = tickets_sold - 285
-                if event_id == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
-                    if h_diff < 96.35:
-                        tickets_sold = tickets_sold + 296 + 285
-                    if h_diff < 49.8:
-                        tickets_sold = tickets_sold + 2333
+                tickets_sold = apply_ticket_corrections(event_id, entry[1], h_diff)
 
                 hours.append(h_diff)
                 sold.append(tickets_sold)
@@ -211,17 +216,63 @@ def generate_page(db_path, out_path, template_dir='templates'):
         if event_time < now:
             continue
 
-        # Get latest entry for this event
+        # Get all entries for this event
         entries = db.get_entries_for_event(conn, event_id)
         if entries:
             # Latest entry is the last one
             latest = entries[-1]
-            events.append({
+            event_data = {
                 "title": entry[1],
                 "id": event_id,
                 "sold": latest[1],
                 "avail": latest[2],
-            })
+            }
+
+            # Calculate capacity percentage (assuming ~15000 capacity)
+            total_sold = latest[1] + 2333 + 285 + 296  # w/ Sponsors, VIP, etc.
+            capacity = int((total_sold / 15000) * 100)
+            event_data["capacity_percent"] = capacity
+
+            # Calculate sales velocity
+            if len(entries) >= 2:
+                # Get timestamps for velocity calculation
+                timestamps = []
+                for ent in entries:
+                    try:
+                        ts = dateutil.parser.parse(ent[3])
+                        if ts.tzinfo:
+                            ts = ts.replace(tzinfo=None)
+                        timestamps.append((ts, ent[1]))
+                    except:
+                        continue
+
+                if len(timestamps) >= 2:
+                    timestamps.sort()
+
+                    # Calculate velocity as difference between oldest and newest in each time window
+                    def get_sold_in_window(window_minutes):
+                        window_ago = now - datetime.timedelta(minutes=window_minutes)
+                        window_entries = [s for t, s in timestamps if t >= window_ago]
+                        if len(window_entries) >= 2:
+                            return max(window_entries) - min(window_entries)
+                        return 0
+
+                    ten_min_sold = get_sold_in_window(10)
+                    one_hour_sold = get_sold_in_window(60)
+                    one_day_sold = get_sold_in_window(1440)
+
+                    velocity_parts = []
+                    if one_day_sold > 0:
+                        velocity_parts.append(f"{one_day_sold} tickets in last day")
+                    if one_hour_sold > 0:
+                        velocity_parts.append(f"{one_hour_sold} in last hour")
+                    if ten_min_sold > 0:
+                        velocity_parts.append(f"{ten_min_sold} in last 10min")
+
+                    if velocity_parts:
+                        event_data["velocity"] = " | ".join(velocity_parts)
+
+            events.append(event_data)
 
     conn.close()
 
@@ -259,17 +310,39 @@ def generate_page(db_path, out_path, template_dir='templates'):
         entries = db.get_entries_for_event(conn, event_id)
         if entries:
             latest = entries[-1]
+            # Extract away team name (remove "GAK 1902 : " prefix)
+            title = entry[1]
+            if " : " in title:
+                title = title.split(" : ", 1)[1]
             # Generate mini graph for this event
             mini_graph = generate_mini_graph(event_id, event_time, db_path)
             past_events.append({
-                "title": entry[1],
+                "title": title,
                 "date": event_time.strftime('%Y-%m-%d'),
                 "sold": latest[1],
                 "graph": mini_graph,
+                "event_id": event_id,
             })
 
-    # Sort by date descending
+    # Sort by sold descending for ranking
+    past_events.sort(key=lambda x: x['sold'], reverse=True)
+
+    # Add rankings and mark top 3
+    for i, event in enumerate(past_events):
+        event['rank'] = i + 1
+        if i < 3:
+            event['top_performer'] = True
+
+    # Re-sort by date for display
     past_events.sort(key=lambda x: x['date'], reverse=True)
+
+    # Create season summary
+    if past_events:
+        total_sold = sum(e['sold'] for e in past_events)
+        avg_sold = total_sold // len(past_events)
+        season_summary = f"{len(past_events)} matches this season, average {avg_sold} tickets sold"
+    else:
+        season_summary = None
 
     conn.close()
 
@@ -293,7 +366,12 @@ def generate_page(db_path, out_path, template_dir='templates'):
         templ_path = Path(template_dir)
         jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(str(templ_path)))
         ticket_tmpl = jenv.get_template("ticket-html.tmpl")
-        html_content = ticket_tmpl.render(events=events, img=img, past_events=past_events)
+
+        # Last updated timestamp
+        last_updated = now.strftime('%Y-%m-%d %H:%M:%S')
+
+        html_content = ticket_tmpl.render(events=events, img=img, past_events=past_events,
+                                         season_summary=season_summary, last_updated=last_updated)
 
         # Write to output file
         out_path.write_text(html_content, encoding='utf-8')

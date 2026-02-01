@@ -46,14 +46,19 @@
         grid-template-columns: repeat(4, 1fr);
         gap: 10px;
     }
-    @media (max-width: 900px) {
+    @media (max-width: 1100px) {
         .past-events-grid {
             grid-template-columns: repeat(3, 1fr);
         }
     }
-    @media (max-width: 600px) {
+    @media (max-width: 768px) {
         .past-events-grid {
             grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    @media (max-width: 480px) {
+        .past-events-grid {
+            grid-template-columns: 1fr;
         }
     }
     .past-event-card {
@@ -62,20 +67,76 @@
         border-radius: 4px;
         padding: 10px;
         font-size: 0.9em;
+        position: relative;
+        min-height: 140px;
+        display: flex;
+        flex-direction: column;
+    }
+    .past-event-card.top-performer {
+        border-color: #d9534f;
+        background-color: #fff5f5;
+    }
+    .past-event-card .rank-badge {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background-color: #d9534f;
+        color: white;
+        font-size: 0.75em;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-weight: bold;
     }
     .past-event-card .title {
         font-weight: bold;
         color: #d9534f;
         margin-bottom: 5px;
+        padding-right: 35px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 0;
     }
     .past-event-card .date {
         color: #666;
         font-size: 0.85em;
         margin-bottom: 5px;
+        flex-shrink: 0;
     }
     .past-event-card .sales {
         color: #333;
         margin-bottom: 8px;
+        flex-shrink: 0;
+    }
+    .past-event-card .mini-graph {
+        width: 100%;
+        height: 60px;
+        display: block;
+        margin-top: auto;
+        flex-shrink: 0;
+    }
+    .last-updated {
+        text-align: center;
+        color: #666;
+        font-size: 0.8em;
+        margin-top: 30px;
+    }
+    .season-summary {
+        text-align: center;
+        color: #666;
+        font-size: 0.9em;
+        margin-top: 10px;
+        padding: 10px;
+        background-color: #f9f9f9;
+        border-radius: 4px;
+        max-width: 1000px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .velocity {
+        color: #666;
+        font-size: 0.85em;
+        margin-top: 3px;
     }
     .past-event-card .mini-graph {
         width: 100%;
@@ -101,6 +162,12 @@
     <p>Sold (w/o Sponsors, VIP, etc.): {{event["sold"] + 2333 + 285 + 296}}</p>
     <p>Sold (w/o est. Season tickets, Sponsors, VIP, etc.): {{event["sold"] - 2864}}</p>
     <p>Sold (w est. Sponsors, VIP, etc.): {{event["sold"] + 393 + 2333 + 285 + 296}}</p>
+    {% if event.capacity_percent %}
+    <p>Capacity: {{event.capacity_percent}}%</p>
+    {% endif %}
+    {% if event.velocity %}
+    <p class="velocity">{{event.velocity}}</p>
+    {% endif %}
 </div>
 {% endfor %}
 
@@ -111,9 +178,15 @@
 {% if past_events %}
 <div class="past-events">
     <h2>Past Matches</h2>
+    {% if season_summary %}
+    <div class="season-summary">{{season_summary}}</div>
+    {% endif %}
     <div class="past-events-grid">
     {% for event in past_events %}
-        <div class="past-event-card">
+        <div class="past-event-card{% if event.top_performer %} top-performer{% endif %}">
+            {% if event.rank %}
+            <div class="rank-badge">#{{event.rank}}</div>
+            {% endif %}
             <div class="title">{{event.title}}</div>
             <div class="date">{{event.date}}</div>
             <div class="sales">Sold: {{event.sold}}</div>
@@ -125,6 +198,10 @@
     </div>
 </div>
 {% endif %}
+
+<div class="last-updated">
+    Last updated: {{last_updated}}
+</div>
 
 </body>
 </html>
