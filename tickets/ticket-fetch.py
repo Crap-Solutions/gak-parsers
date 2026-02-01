@@ -152,6 +152,45 @@ def generate_page(db_path, out_path, template_dir='templates'):
         out_path.write_text(html_content, encoding='utf-8')
         return False
 
+    # Fetch past events (from current season - July onwards)
+    conn = db.init_db(str(db_path))
+    events_data = db.get_events(conn)
+
+    # Get current year, if we're before July, use last year's July
+    current_year = now.year
+    if now.month < 7:
+        season_start = datetime.datetime(current_year - 1, 7, 1)
+    else:
+        season_start = datetime.datetime(current_year, 7, 1)
+
+    past_events = []
+    for entry in events_data:
+        event_id = entry[0]
+        try:
+            event_time = dateutil.parser.parse(entry[2])
+            event_time = event_time.replace(tzinfo=None)
+        except (dateutil.parser.ParserError, ValueError) as e:
+            continue
+
+        # Only past events from current season
+        if event_time >= now or event_time < season_start:
+            continue
+
+        # Get latest entry for this event
+        entries = db.get_entries_for_event(conn, event_id)
+        if entries:
+            latest = entries[-1]
+            past_events.append({
+                "title": entry[1],
+                "date": event_time.strftime('%Y-%m-%d'),
+                "sold": latest[1],
+            })
+
+    # Sort by date descending
+    past_events.sort(key=lambda x: x['date'], reverse=True)
+
+    conn.close()
+
     # Generate graph
     try:
         img = graph.generate_graph(str(db_path))
@@ -172,7 +211,7 @@ def generate_page(db_path, out_path, template_dir='templates'):
         templ_path = Path(template_dir)
         jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(str(templ_path)))
         ticket_tmpl = jenv.get_template("ticket-html.tmpl")
-        html_content = ticket_tmpl.render(events=events, img=img)
+        html_content = ticket_tmpl.render(events=events, img=img, past_events=past_events)
 
         # Write to output file
         out_path.write_text(html_content, encoding='utf-8')

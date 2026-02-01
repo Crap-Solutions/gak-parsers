@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
 <meta http-equiv="refresh" content="300">
 <title>GAK ticket watch</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23d9534f%22/></svg>">
@@ -26,6 +27,49 @@
     .event p {
         margin: 5px 0;
     }
+    .past-events {
+        margin-top: 30px;
+    }
+    .past-events h2 {
+        color: #d9534f;
+        font-size: 1.2em;
+        margin-bottom: 15px;
+    }
+    .past-events-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+    }
+    @media (max-width: 900px) {
+        .past-events-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+    @media (max-width: 600px) {
+        .past-events-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    .past-event-card {
+        background-color: #fff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        font-size: 0.9em;
+    }
+    .past-event-card .title {
+        font-weight: bold;
+        color: #d9534f;
+        margin-bottom: 5px;
+    }
+    .past-event-card .date {
+        color: #666;
+        font-size: 0.85em;
+        margin-bottom: 5px;
+    }
+    .past-event-card .sales {
+        color: #333;
+    }
     img {
         display: block;
         margin: 20px auto;
@@ -46,6 +90,21 @@
 {% endfor %}
 
 <img src='data:image/png;base64, {{img}}'/>
+
+{% if past_events %}
+<div class="past-events">
+    <h2>Past Matches</h2>
+    <div class="past-events-grid">
+    {% for event in past_events %}
+        <div class="past-event-card">
+            <div class="title">{{event.title}}</div>
+            <div class="date">{{event.date}}</div>
+            <div class="sales">Sold: {{event.sold}}</div>
+        </div>
+    {% endfor %}
+    </div>
+</div>
+{% endif %}
 
 </body>
 </html>
