@@ -4,9 +4,11 @@ Runs via cron every 5 minutes.
 """
 
 import argparse
+import io
 import logging
 import sys
 import traceback
+import base64
 import datetime
 import dateutil.parser
 from pathlib import Path
@@ -14,6 +16,10 @@ from pathlib import Path
 import jinja2
 
 from lib import db, api, graph
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
 # Setup logging
@@ -93,6 +99,79 @@ def generate_empty_html(message="No upcoming events found"):
     </div>
 </body>
 </html>'''
+
+
+def generate_mini_graph(event_id, event_time, db_path):
+    """Generate mini graph for a single event. Returns base64-encoded PNG or None."""
+    try:
+        conn = db.init_db(str(db_path))
+        entries = db.get_entries_for_event(conn, event_id)
+        conn.close()
+
+        if not entries:
+            return None
+
+        hours = []
+        sold = []
+        for entry in entries:
+            try:
+                tickets_time = dateutil.parser.parse(entry[3])
+                # Make both naive for comparison
+                if tickets_time.tzinfo is not None:
+                    tickets_time = tickets_time.replace(tzinfo=None)
+                event_time_naive = event_time.replace(tzinfo=None) if event_time.tzinfo else event_time
+
+                h_diff = (event_time_naive - tickets_time).total_seconds() / 3600
+
+                # Apply corrections
+                tickets_sold = entry[1]
+                if event_id == "456e9a8a-ce64-4580-b9e0-3405a810c696":
+                    if tickets_sold >= 2302:
+                        tickets_sold = tickets_sold - 1939
+                if event_id == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
+                    if tickets_sold >= 5100 and h_diff > 74.20:
+                        tickets_sold = tickets_sold - 285
+                if event_id == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
+                    if h_diff < 96.35:
+                        tickets_sold = tickets_sold + 296 + 285
+                    if h_diff < 49.8:
+                        tickets_sold = tickets_sold + 2333
+
+                hours.append(h_diff)
+                sold.append(tickets_sold)
+            except (dateutil.parser.ParserError, ValueError, KeyError):
+                continue
+
+        if not hours or not sold:
+            return None
+
+        # Filter to last 300 hours
+        filtered_hours = [h for h in hours if h <= 300]
+        filtered_sold = [s for h, s in zip(hours, sold) if h <= 300]
+
+        if not filtered_hours:
+            return None
+
+        # Create mini graph
+        fig, ax = plt.subplots(figsize=(3, 1.5))
+        ax.plot(filtered_hours, filtered_sold, color='#d9534f', linewidth=1.5)
+        ax.set_xlim([0, 300])
+        ax.invert_xaxis()
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
+        ax.grid(False)
+
+        tmpfile = io.BytesIO()
+        plt.savefig(tmpfile, format='png', dpi=80, bbox_inches='tight', pad_inches=0.05)
+        img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
+        plt.close()
+
+        return img
+    except Exception as e:
+        logger.warning(f"Failed to generate mini graph for {event_id}: {e}")
+        return None
 
 
 def generate_page(db_path, out_path, template_dir='templates'):
@@ -180,10 +259,13 @@ def generate_page(db_path, out_path, template_dir='templates'):
         entries = db.get_entries_for_event(conn, event_id)
         if entries:
             latest = entries[-1]
+            # Generate mini graph for this event
+            mini_graph = generate_mini_graph(event_id, event_time, db_path)
             past_events.append({
                 "title": entry[1],
                 "date": event_time.strftime('%Y-%m-%d'),
                 "sold": latest[1],
+                "graph": mini_graph,
             })
 
     # Sort by date descending
