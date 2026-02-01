@@ -1,2 +1,3 @@
 data/*.db
 output/
+lib/__pycache__/
