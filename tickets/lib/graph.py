@@ -7,6 +7,7 @@ import datetime
 import base64
 import traceback
 import dateutil.parser
+import numpy as np
 
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for cron
@@ -54,6 +55,9 @@ def generate_graph(db_path):
         matplotlib.pyplot.ylabel("Tickets Sold (Online Available)")
         matplotlib.pyplot.grid(True, linestyle='--', alpha=0.7)
 
+        # Collect final sales numbers for average calculation
+        final_sales = []
+
         for event in parsed_events:
             try:
                 cur = conn.execute("SELECT * FROM ENTRIES WHERE MATCH=?", (event['id'],))
@@ -91,10 +95,18 @@ def generate_graph(db_path):
 
                 if hours and sold:
                     matplotlib.pyplot.plot(hours, sold, label=event['title'])
+                    # Collect final sales number (last entry)
+                    final_sales.append(sold[-1])
 
             except sqlite3.Error as e:
                 logger.error(f"Database error while fetching entries for {event['id']}: {e}")
                 continue
+
+        # Calculate and plot average line (horizontal)
+        if final_sales:
+            avg_sales = np.mean(final_sales)
+            matplotlib.pyplot.axhline(y=avg_sales, color='black', linestyle='--',
+                                     linewidth=1, label=f'Average ({int(avg_sales)})', alpha=0.4)
 
         if not matplotlib.pyplot.gca().has_data():
             logger.warning("No data to plot")
