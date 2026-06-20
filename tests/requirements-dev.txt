@@ -1,0 +1,4 @@
+# Test dependencies. Also install each script's runtime dependencies
+# (requests, jinja2, praw, python-dateutil, numpy, matplotlib,
+#  google-api-python-client, google-auth-oauthlib) to import them.
+pytest>=7.4.0

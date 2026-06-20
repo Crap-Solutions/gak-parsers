@@ -391,6 +391,25 @@ def generate_page(db_path, out_path, template_dir='templates'):
         return False
 
 
+def _resolve_log_file(candidates):
+    """Return the first writable log file path from candidates, or None.
+
+    Tries each candidate in order, creating its parent directory if needed.
+    A warning is printed to stderr for any candidate that cannot be opened,
+    so the failure is visible in cron mail even when stdout is discarded.
+    """
+    for candidate in candidates:
+        try:
+            Path(candidate).parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(candidate)
+            handler.close()
+            return candidate
+        except (PermissionError, OSError) as e:
+            print(f"WARNING: cannot open log file {candidate}: {e}", file=sys.stderr)
+            continue
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description='Fetch GAK ticket data from API and optionally generate HTML')
     parser.add_argument('--db', default='data/ticket.db',
@@ -413,23 +432,17 @@ def main():
     # to a file next to the output so logs survive a non-root cron job
     # instead of vanishing silently with stdout.
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-    log_file = args.log or '/var/log/gak-ticket.log'
+    primary_log = args.log or '/var/log/gak-ticket.log'
     fallback_log = str(Path(__file__).resolve().parent / 'output' / 'ticket-fetch.log')
-    file_handler = None
-    for candidate in (log_file, fallback_log):
-        try:
-            Path(candidate).parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(candidate)
-            file_handler.setFormatter(fmt)
-            logger.addHandler(file_handler)
-            if candidate != log_file:
-                print(f"WARNING: {log_file} not writable; logging to {candidate}",
-                      file=sys.stderr)
-            break
-        except (PermissionError, OSError) as e:
-            print(f"WARNING: cannot open log file {candidate}: {e}", file=sys.stderr)
-            continue
-    if file_handler is None:
+    chosen = _resolve_log_file([primary_log, fallback_log])
+    if chosen is not None:
+        file_handler = logging.FileHandler(chosen)
+        file_handler.setFormatter(fmt)
+        logger.addHandler(file_handler)
+        if chosen != primary_log:
+            print(f"WARNING: {primary_log} not writable; logging to {chosen}",
+                  file=sys.stderr)
+    else:
         print("WARNING: no writable log file available; logging to stdout only",
               file=sys.stderr)
 
