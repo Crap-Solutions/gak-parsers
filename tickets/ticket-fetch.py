@@ -408,15 +408,30 @@ def main():
 
     args = parser.parse_args()
 
-    # Reconfigure logging to add file handler if requested
+    # Configure file logging. The primary default (/var/log/gak-ticket.log)
+    # is used when writable (e.g. cron running as root). Otherwise fall back
+    # to a file next to the output so logs survive a non-root cron job
+    # instead of vanishing silently with stdout.
+    fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     log_file = args.log or '/var/log/gak-ticket.log'
-    try:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-        logger.addHandler(file_handler)
-    except (PermissionError, OSError):
-        # Fallback to stdout only if log file is not writable
-        pass
+    fallback_log = str(Path(__file__).resolve().parent / 'output' / 'ticket-fetch.log')
+    file_handler = None
+    for candidate in (log_file, fallback_log):
+        try:
+            Path(candidate).parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(candidate)
+            file_handler.setFormatter(fmt)
+            logger.addHandler(file_handler)
+            if candidate != log_file:
+                print(f"WARNING: {log_file} not writable; logging to {candidate}",
+                      file=sys.stderr)
+            break
+        except (PermissionError, OSError) as e:
+            print(f"WARNING: cannot open log file {candidate}: {e}", file=sys.stderr)
+            continue
+    if file_handler is None:
+        print("WARNING: no writable log file available; logging to stdout only",
+              file=sys.stderr)
 
     # Ensure data directory exists
     db_path = Path(args.db)
