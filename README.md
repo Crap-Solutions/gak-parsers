@@ -33,17 +33,23 @@ python reddit-create.py
 
 Tracks ticket sales for GAK events:
 
-- **ticket-check.py**: Polls ticket.grazerak.at and tracks sales
+- **ticket-fetch.py**: Polls ticket.grazerak.at and tracks sales (runs from cron)
   - Fetches event and ticket availability data
-  - Stores history in SQLite database
+  - Stores history in SQLite database (via the `lib/` package)
   - Generates matplotlib sales graphs
-  - Renders HTML report with Jinja2
+  - Renders an HTML report with Jinja2
+  - Writes an error/empty-state page on failure so the site degrades gracefully
 
 **Usage:**
 ```bash
 cd tickets
-python ticket-check.py <db_file>
+# fetch only:
+python ticket-fetch.py
+# fetch and regenerate the HTML page (typical cron invocation):
+python ticket-fetch.py --generate
 ```
+
+Options: `--db`, `--output`, `--templates`, `--timeout`, `--log`, `--generate`.
 
 **Database:** Stored in `tickets/data/ticket.db`
 
@@ -51,7 +57,8 @@ python ticket-check.py <db_file>
 - requests
 - jinja2
 - matplotlib
-- dateutil
+- python-dateutil
+- numpy
 
 ---
 
