@@ -23,21 +23,48 @@ REQUEST_TIMEOUT = 30
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(log_file=None):
+def _resolve_log_level(cli_level):
+    """Resolve the effective stdout log level.
+
+    Precedence: --log-level flag > $GAK_LOG_LEVEL env > INFO default.
+    Accepts level names (DEBUG/INFO/WARNING/ERROR/CRITICAL) or numbers.
+    This only affects the stdout handler, so cron can run at WARNING
+    (silent on success, mails on failure) while the file log keeps INFO.
+    """
+    raw = cli_level or os.environ.get("GAK_LOG_LEVEL")
+    if not raw:
+        return logging.INFO
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    level = logging.getLevelName(str(raw).upper())
+    if isinstance(level, int):
+        return level
+    print(f"WARNING: invalid log level {raw!r}, defaulting to INFO", file=sys.stderr)
+    return logging.INFO
+
+
+def setup_logging(log_file=None, stdout_level=logging.INFO):
     """Configure logging to stdout plus an optional file.
 
     In a cron context stdout is usually discarded, so a writable log file
     is important for post-mortem debugging. If the requested file cannot
     be opened we warn on stderr (cron captures stderr in mail) and carry
     on with stdout-only logging rather than failing silently.
+
+    `stdout_level` filters the stdout/cron handler; the file handler is
+    always kept at INFO so on-disk detail is preserved.
     """
     root = logging.getLogger()
+    # Root must be at most INFO so the file handler still sees INFO records.
     root.setLevel(logging.INFO)
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
     if not root.handlers:
         sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(fmt)
+        sh.setLevel(stdout_level)
         root.addHandler(sh)
 
     if log_file:
@@ -259,11 +286,14 @@ def main():
                         help=f'HTTP request timeout in seconds (default: {REQUEST_TIMEOUT})')
     parser.add_argument('--log', default=None,
                         help='Log file path (default: <scriptdir>/output/reddit-create.log)')
+    parser.add_argument('--log-level', default=None,
+                        help='Stdout log level (default: INFO). Also set via $GAK_LOG_LEVEL. '
+                             'Use WARNING in cron to stay silent on success.')
     args = parser.parse_args()
 
     log_file = args.log or (os.path.dirname(os.path.abspath(__file__))
                             + '/output/reddit-create.log')
-    setup_logging(log_file)
+    setup_logging(log_file, stdout_level=_resolve_log_level(args.log_level))
 
     try:
         return run(args)
