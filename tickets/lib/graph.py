@@ -19,10 +19,9 @@ logger = logging.getLogger(__name__)
 def generate_graph(db_path):
     """Generate sales graph with error handling. Returns base64-encoded PNG."""
     try:
-        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-
-        # Import get_events_for_graph here to avoid circular import
-        from .db import get_events_for_graph
+        # Import here to avoid a circular import.
+        from .db import open_connection, get_events_for_graph
+        conn = open_connection(db_path, read_only=True)
         events = get_events_for_graph(conn)
 
         if not events:

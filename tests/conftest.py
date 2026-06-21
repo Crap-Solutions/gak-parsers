@@ -14,6 +14,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Make tickets/lib importable for direct module tests (test_db.py).
+TICKETS = ROOT / "tickets"
+if str(TICKETS) not in sys.path:
+    sys.path.insert(0, str(TICKETS))
+
 
 def _load_script(script_rel):
     """Load a script file as a module and return it."""

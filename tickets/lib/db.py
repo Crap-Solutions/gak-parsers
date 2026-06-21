@@ -2,31 +2,43 @@
 
 import sqlite3
 import logging
-from contextlib import contextmanager
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Seconds to wait for a database lock before failing. SQLite has no
+# network-style connect timeout; this busy timeout governs how long a
+# connection waits for another connection (e.g. a previous cron run still
+# writing) to release its lock before raising OperationalError("database
+# is locked"). Applied via both the connect() timeout argument and
+# PRAGMA busy_timeout (milliseconds) for robustness.
+DB_TIMEOUT = 30
 
-@contextmanager
-def database_connection(db_path):
-    """Context manager for database connections with error handling."""
-    conn = None
+
+def open_connection(db_path, read_only=False):
+    """Open a SQLite connection with a consistent busy timeout.
+
+    All database access should go through here so that lock contention
+    fails after DB_TIMEOUT seconds instead of hanging indefinitely or
+    failing spuriously. Returns a connection whose busy_timeout is set;
+    callers are responsible for close()-ing it.
+    """
     try:
-        conn = sqlite3.connect(str(db_path))
-        yield conn
+        if read_only:
+            conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True,
+                                   timeout=DB_TIMEOUT)
+        else:
+            conn = sqlite3.connect(str(db_path), timeout=DB_TIMEOUT)
+        conn.execute(f'PRAGMA busy_timeout = {int(DB_TIMEOUT * 1000)}')
+        return conn
     except sqlite3.Error as e:
-        logger.error(f"Database connection error: {e}")
+        logger.error(f"Failed to open database {db_path}: {e}")
         raise
-    finally:
-        if conn:
-            conn.close()
 
 
 def init_db(db_file):
     """Initialize database schema."""
     try:
-        conn = sqlite3.connect(str(db_file))
+        conn = open_connection(db_file)
         conn.execute('''
             CREATE TABLE IF NOT EXISTS EVENTS
             (
