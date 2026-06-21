@@ -6,6 +6,7 @@ Runs via cron every 5 minutes.
 import argparse
 import io
 import logging
+import os
 import sys
 import traceback
 import base64
@@ -410,6 +411,28 @@ def _resolve_log_file(candidates):
     return None
 
 
+def _resolve_log_level(cli_level):
+    """Resolve the effective stdout log level.
+
+    Precedence: --log-level flag > $GAK_LOG_LEVEL env > INFO default.
+    Accepts level names (DEBUG/INFO/WARNING/ERROR/CRITICAL) or numbers.
+    This only affects the stdout handler, so cron can run at WARNING
+    (silent on success, mails on failure) while the file log keeps INFO.
+    """
+    raw = cli_level or os.environ.get("GAK_LOG_LEVEL")
+    if not raw:
+        return logging.INFO
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    level = logging.getLevelName(str(raw).upper())
+    if isinstance(level, int):
+        return level
+    print(f"WARNING: invalid log level {raw!r}, defaulting to INFO", file=sys.stderr)
+    return logging.INFO
+
+
 def main():
     parser = argparse.ArgumentParser(description='Fetch GAK ticket data from API and optionally generate HTML')
     parser.add_argument('--db', default='data/ticket.db',
@@ -422,10 +445,22 @@ def main():
                         help='Request timeout in seconds (default: 30)')
     parser.add_argument('--log', default=None,
                         help='Log file path (default: /var/log/gak-ticket.log, or stdout only if not writable)')
+    parser.add_argument('--log-level', default=None,
+                        help='Stdout log level (default: INFO). Also set via $GAK_LOG_LEVEL. '
+                             'Use WARNING in cron to stay silent on success.')
     parser.add_argument('--generate', action='store_true',
                         help='Generate HTML page after fetching data')
 
     args = parser.parse_args()
+
+    # Apply the resolved stdout log level to the stdout handler (created at
+    # module import via basicConfig on the root logger). The file handler
+    # added below stays at INFO, so on-disk detail is always preserved.
+    stdout_level = _resolve_log_level(args.log_level)
+    logging.getLogger().setLevel(logging.INFO)
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            h.setLevel(stdout_level)
 
     # Configure file logging. The primary default (/var/log/gak-ticket.log)
     # is used when writable (e.g. cron running as root). Otherwise fall back
