@@ -8,46 +8,57 @@ REQUEST_TIMEOUT = 30
 logger = logging.getLogger(__name__)
 
 
+class FetchError(Exception):
+    """Raised when a fetch from the ticket API fails (network/HTTP/parse).
+
+    The api functions raise rather than logging/alerting here, so the caller
+    can decide how to surface the failure (e.g. the cron alert-grace window
+    that suppresses emails during the upstream server's regular downtimes).
+    """
+
+
 def fetch_events(base_url, events_ep, timeout=REQUEST_TIMEOUT):
-    """Fetch events from API with error handling."""
+    """Fetch the list of future published events from the API.
+
+    Returns the parsed list (possibly empty) on success. Raises FetchError
+    on any network, HTTP, or parse failure, so a server problem can be told
+    apart from a genuinely empty result.
+    """
     try:
         response = requests.get(base_url + events_ep, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-
-        if not isinstance(data, list):
-            logger.error(f"Expected list from events API, got {type(data)}")
-            return []
-
-        return data
-    except requests.exceptions.Timeout:
-        logger.error("Timeout fetching events from API")
-        return []
+    except requests.exceptions.Timeout as e:
+        raise FetchError("Timeout fetching events from API") from e
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch events: {e}")
-        return []
+        raise FetchError(f"Failed to fetch events: {e}") from e
     except ValueError as e:
-        logger.error(f"Invalid JSON response: {e}")
-        return []
+        raise FetchError(f"Invalid JSON response: {e}") from e
+
+    if not isinstance(data, list):
+        raise FetchError(
+            f"Expected list from events API, got {type(data).__name__}")
+
+    return data
 
 
 def fetch_event_details(base_url, event_id, timeout=REQUEST_TIMEOUT):
-    """Fetch event details from API with error handling."""
+    """Fetch event details (stadium representation config) from the API.
+
+    Returns the parsed JSON on success. Raises FetchError on any network,
+    HTTP, or parse failure.
+    """
+    chk_url = base_url + event_id + "/public-stadium-representation-config"
     try:
-        event_url = base_url + event_id + "/"
-        chk_url = event_url + "public-stadium-representation-config"
         response = requests.get(chk_url, timeout=timeout)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.Timeout:
-        logger.error(f"Timeout fetching details for event {event_id}")
-        return None
+    except requests.exceptions.Timeout as e:
+        raise FetchError(f"Timeout fetching details for event {event_id}") from e
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch details for event {event_id}: {e}")
-        return None
+        raise FetchError(f"Failed to fetch details for event {event_id}: {e}") from e
     except ValueError as e:
-        logger.error(f"Invalid JSON response for event {event_id}: {e}")
-        return None
+        raise FetchError(f"Invalid JSON response for event {event_id}: {e}") from e
 
 
 def parse_event_data(event, content):

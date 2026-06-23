@@ -433,6 +433,115 @@ def _resolve_log_level(cli_level):
     return logging.INFO
 
 
+# The upstream ticket server has regular, short downtimes. Cron polls every
+# 5 minutes, so alerting on the first failure of every outage would flood the
+# inbox. Instead we suppress the cron email (stdout) for this long after a
+# fetch failure starts, and only mail once an outage has persisted past it.
+DEFAULT_ALERT_GRACE = 24 * 60 * 60  # 24 hours
+
+
+def _resolve_alert_grace(cli_value):
+    """Resolve the alert-grace window in seconds.
+
+    Precedence: --alert-grace flag > $GAK_ALERT_GRACE env > 24h default.
+    0 disables the window (alert immediately on every failure, the legacy
+    behaviour). Like ``--log-level`` this only governs the cron-facing stdout
+    output; failures are always recorded in the file log.
+    """
+    raw = cli_value if cli_value is not None else os.environ.get("GAK_ALERT_GRACE")
+    if not raw:
+        return DEFAULT_ALERT_GRACE
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"WARNING: invalid alert grace {raw!r}, "
+              f"defaulting to {DEFAULT_ALERT_GRACE}s", file=sys.stderr)
+        return DEFAULT_ALERT_GRACE
+    if value < 0:
+        print(f"WARNING: negative alert grace {value}, treating as 0 (disabled)",
+              file=sys.stderr)
+        return 0
+    return value
+
+
+def _failure_state_path(db_path, override=None):
+    """Return the path of the fetch-failure state file.
+
+    Defaults to ``<db>.failstate`` so it lives alongside the database (always
+    writable by the cron job) and survives across runs.
+    """
+    if override:
+        return Path(override)
+    return Path(str(db_path) + ".failstate")
+
+
+def _read_failure_since(state_path):
+    """Return the start timestamp of the current outage, or None."""
+    try:
+        text = state_path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return None
+    if not text:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _within_grace(state_path, grace_seconds, now=None):
+    """Decide whether a fetch failure is still inside the alert-grace window.
+
+    Reads the outage start timestamp from ``state_path``; if none is recorded
+    yet (first failure of a new outage) it is stamped now. Returns True when
+    the outage is younger than ``grace_seconds`` (suppress the cron email and
+    keep serving the last good page), False once the window has elapsed (alert
+    normally). A non-positive ``grace_seconds`` disables grace entirely.
+
+    On any problem reading or writing the state file we fail safe and return
+    False (alert) rather than silently swallowing an outage.
+    """
+    if grace_seconds <= 0:
+        return False
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    since = _read_failure_since(state_path)
+    if since is None:
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(now.isoformat(), encoding="utf-8")
+        except OSError as e:
+            logger.warning(
+                f"Cannot write failure state {state_path}: {e}; alerting")
+            return False
+        return True  # outage just started -> within grace
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=datetime.timezone.utc)
+    return (now - since).total_seconds() < grace_seconds
+
+
+def _clear_failure_state(state_path):
+    """Clear the outage state after a successful fetch (server is back up)."""
+    try:
+        state_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.warning(f"Could not clear failure state {state_path}: {e}")
+
+
+def _log_to_file_only(level, msg):
+    """Emit a log record to file handlers only, bypassing stdout.
+
+    During the alert-grace window we still want the failure on disk for
+    debugging, but it must not reach cron's stdout (which triggers an email
+    every 5 minutes).
+    """
+    record = logger.makeRecord(logger.name, level, __file__, 0, msg, None, None)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.handle(record)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Fetch GAK ticket data from API and optionally generate HTML')
     parser.add_argument('--db', default='data/ticket.db',
@@ -448,6 +557,15 @@ def main():
     parser.add_argument('--log-level', default=None,
                         help='Stdout log level (default: INFO). Also set via $GAK_LOG_LEVEL. '
                              'Use WARNING in cron to stay silent on success.')
+    parser.add_argument('--alert-grace', type=int, default=None,
+                        help='Seconds to suppress the cron alert email after a fetch '
+                             'failure starts (the upstream server has regular short '
+                             'downtimes and cron polls every 5 min). Default 24h; '
+                             '0 disables it and alerts immediately. Also set via '
+                             '$GAK_ALERT_GRACE.')
+    parser.add_argument('--failstate', default=None,
+                        help='Path to the fetch-failure state file used by '
+                             '--alert-grace (default: <db>.failstate).')
     parser.add_argument('--generate', action='store_true',
                         help='Generate HTML page after fetching data')
 
@@ -491,6 +609,12 @@ def main():
     if not out_path.parent.exists():
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Alert-grace window: the upstream server has regular short downtimes and
+    # cron polls every 5 minutes, so we only email after a fetch failure has
+    # persisted past this window. See _within_grace().
+    grace_seconds = _resolve_alert_grace(args.alert_grace)
+    state_path = _failure_state_path(db_path, args.failstate)
+
     # Initialize database
     try:
         conn = db.init_db(str(db_path))
@@ -507,12 +631,26 @@ def main():
 
     try:
         events_data = api.fetch_events(base_url, events_ep, args.timeout)
-    except Exception as e:
-        logger.error(f"Failed to fetch events: {e}")
+    except api.FetchError as e:
+        msg = f"Failed to fetch events: {e}"
+        if _within_grace(state_path, grace_seconds):
+            # Transient upstream blip: record on disk only (not stdout, which
+            # would mail cron) and keep serving the last good page instead of
+            # overwriting it every 5 minutes. Alert once it persists ~24h.
+            _log_to_file_only(logging.ERROR, msg)
+            logger.info("Upstream fetch failing; within alert-grace window, "
+                        "suppressing cron email")
+            if args.generate and not out_path.exists():
+                out_path.write_text(generate_error_html(msg), encoding='utf-8')
+            sys.exit(0)
+        # Grace window elapsed: sustained outage -> alert normally.
+        logger.error(msg)
         if args.generate:
-            html_content = generate_error_html(f"Failed to fetch events: {e}")
-            out_path.write_text(html_content, encoding='utf-8')
+            out_path.write_text(generate_error_html(msg), encoding='utf-8')
         sys.exit(1)
+
+    # Server responded (even with an empty list): any outage is over.
+    _clear_failure_state(state_path)
 
     if not events_data:
         logger.info("No events found from API")
@@ -529,9 +667,10 @@ def main():
             logger.warning(f"Event missing ID, skipping")
             continue
 
-        content = api.fetch_event_details(base_url, event_id, args.timeout)
-        if content is None:
-            logger.error(f"Could not fetch details for event {event_id}, skipping")
+        try:
+            content = api.fetch_event_details(base_url, event_id, args.timeout)
+        except api.FetchError as e:
+            logger.error(f"{e}; skipping")
             continue
 
         parsed = api.parse_event_data(event, content)
