@@ -39,6 +39,9 @@ Tracks ticket sales for GAK events:
   - Generates matplotlib sales graphs
   - Renders an HTML report with Jinja2
   - Writes an error/empty-state page on failure so the site degrades gracefully
+  - Suppresses the cron alert email for a configurable grace window after a
+    fetch failure, because the upstream server has regular short downtimes and
+    cron polls every 5 minutes (see below)
 
 **Usage:**
 ```bash
@@ -49,7 +52,30 @@ python ticket-fetch.py
 python ticket-fetch.py --generate
 ```
 
-Options: `--db`, `--output`, `--templates`, `--timeout`, `--log`, `--generate`.
+Options: `--db`, `--output`, `--templates`, `--timeout`, `--log`, `--log-level`,
+`--alert-grace`, `--failstate`, `--generate`.
+
+**Cron / alerting:** the job runs every 5 minutes and cron mails any stdout
+output. Two knobs keep the inbox quiet:
+
+- `--log-level` / `$GAK_LOG_LEVEL` — stdout level. Use `WARNING` in cron so a
+  successful run is silent (the file log still keeps `INFO`).
+- `--alert-grace` / `$GAK_ALERT_GRACE` — seconds to suppress the alert email
+  after a fetch failure *starts* (default 24h; `0` disables it). The first
+  failure of an outage is recorded to a state file (`<db>.failstate`, override
+  with `--failstate`) and logged to the file only; the last good page keeps
+  being served. Only once the outage has persisted past the window does the
+  job print the error to stdout (-> cron email), replace the page, and exit 1.
+  A successful fetch clears the state. So a typical blip produces no email; a
+  multi-hour/multi-day downtime produces exactly one alert.
+
+A typical cron line therefore needs no special flags beyond what's above:
+
+```cron
+*/5 * * * * GAK_LOG_LEVEL=WARNING python3 ticket-fetch.py \
+    --db data/events.db --output /var/www/.../index.html \
+    --log /var/log/ticket-fetch.log --generate
+```
 
 **Database:** Stored in `tickets/data/ticket.db`
 
