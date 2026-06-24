@@ -166,13 +166,20 @@ def get_players(results):
     return list(players)
 
 
+# Points awarded per scoring outcome. A score of '0' means the player
+# participated but scored no points and is not counted toward any bucket.
+# Single source of truth: get_table_data both counts into and totals from
+# these keys, so the per-category weight and the total can no longer drift.
+SCORE_WEIGHTS = {"1SC": 1, "FSC": 2, "2SC": 3, "FSC1": 6, "W": 12}
+
+
 def get_table_data(results):
     table_data = []
     players = get_players(results)
     for p in players:
-        # name, played, scores, obg, score
-        data = [p, 0, {}, 0, 0]
-        scores = {"1SC": 0, "FSC": 0, "2SC": 0, "FSC1": 0, "W": 0}
+        scores = {k: 0 for k in SCORE_WEIGHTS}
+        # name, played, scores-by-category, obg, total-points
+        data = [p, 0, scores, 0, 0]
         for res in results:
             e = res.get(p, {})
             if not e:
@@ -187,16 +194,14 @@ def get_table_data(results):
                                f"{p!r}: {ex}; skipping round")
                 continue
             score = e.get('score')
-            if score in scores:
+            if score in SCORE_WEIGHTS:
                 scores[score] += 1
             elif score not in ('0', None):
                 logger.warning(f"Unknown tippspiel score {score!r} for player "
                                f"{p!r}; skipping")
             data[-2] += obg
             data[1] += 1
-        data[2] = scores
-        data[-1] = scores["1SC"] + scores["FSC"]*2 + scores["2SC"]*3 + \
-            scores["FSC1"]*6 + scores["W"]*12
+        data[-1] = sum(scores[k] * SCORE_WEIGHTS[k] for k in SCORE_WEIGHTS)
         table_data.append(data)
 
     table_data.sort(key=lambda x: (-x[-1], x[-2], -x[1], x[0]))
@@ -231,6 +236,10 @@ def run():
             # only consider finished rounds (need at least 3 rows to compare)
             if len(values) < 3:
                 continue
+            # Heuristic gate for scored-vs-in-progress rounds: a round is
+            # only counted once its first two data rows differ in length
+            # (scoring appends a column). Carry-over behaviour with no test
+            # coverage -- confirm against historical data before changing.
             if len(values[1]) == len(values[2]):
                 continue
             sdata.append(values)
