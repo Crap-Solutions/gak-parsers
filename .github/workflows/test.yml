@@ -1,0 +1,34 @@
+name: Tests
+
+# Runs the pytest suite on every push/PR. The other workflow only mirrors
+# to GitLab, so without this a red suite would ship silently.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The suite imports all three cron scripts (see tests/conftest.py),
+          # so every runtime dependency must be installed, not just pytest.
+          pip install \
+            pytest requests jinja2 python-dateutil numpy matplotlib \
+            praw prawcore google-api-python-client google-auth-oauthlib \
+            google-auth-httplib2
+      - name: Run tests
+        run: python -m pytest -q
