@@ -4,6 +4,7 @@ Runs via cron every 5 minutes.
 """
 
 import argparse
+import html
 import io
 import logging
 import os
@@ -33,8 +34,17 @@ logger = logging.getLogger(__name__)
 
 
 def generate_error_html(error_message, last_successful_run=None):
-    """Generate HTML error page."""
-    last_run_html = f"    <p><em>Last successful run: {last_successful_run}</em></p>" if last_successful_run else ""
+    """Generate HTML error page.
+
+    Both inputs are HTML-escaped: ``error_message`` is frequently upstream
+    or exception text (e.g. a FetchError echoing a server response) and the
+    page is served publicly, so unescaped interpolation would be an
+    injection vector.
+    """
+    error_message = html.escape(str(error_message))
+    last_run_html = (
+        f"    <p><em>Last successful run: {html.escape(str(last_successful_run))}</em></p>"
+        if last_successful_run else "")
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -70,7 +80,12 @@ def generate_error_html(error_message, last_successful_run=None):
 
 
 def generate_empty_html(message="No upcoming events found"):
-    """Generate HTML page for empty state."""
+    """Generate HTML page for empty state.
+
+    ``message`` is HTML-escaped for the same reason as the error page: it is
+    rendered on a public page and could originate from upstream text.
+    """
+    message = html.escape(str(message))
     return f'''<!DOCTYPE html>
 <html>
 <head>
