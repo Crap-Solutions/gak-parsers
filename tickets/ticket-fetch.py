@@ -305,7 +305,7 @@ def generate_page(db_path, out_path, template_dir='templates'):
         try:
             event_time = dateutil.parser.parse(entry[2])
             event_time = event_time.replace(tzinfo=None)
-        except (dateutil.parser.ParserError, ValueError) as e:
+        except (dateutil.parser.ParserError, ValueError):
             continue
 
         # Only past events from current season
@@ -661,7 +661,7 @@ def main():
     for event in events_data:
         event_id = event.get("id")
         if not event_id:
-            logger.warning(f"Event missing ID, skipping")
+            logger.warning("Event missing ID, skipping")
             continue
 
         try:

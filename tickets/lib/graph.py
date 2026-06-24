@@ -11,7 +11,7 @@ import numpy as np
 
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for cron
-import matplotlib.pyplot as plt
+import matplotlib.pyplot  # used as matplotlib.pyplot.* throughout; no alias
 
 from . import corrections
 
