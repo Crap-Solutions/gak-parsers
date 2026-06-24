@@ -37,6 +37,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# --- Published-page ticket-count estimates -------------------------------
+# The API reports only online sales, so these estimates are layered onto the
+# raw SOLD figure for the "Sold" breakdown and the capacity bar. They are
+# empirical ballpark numbers (some inherited; the UI labels are themselves
+# ambiguous), kept here as the single source of truth so the page-renderer
+# and the template cannot drift. Preserve the arithmetic exactly when
+# renaming -- the values are what's load-bearing, not the names.
+EST_SEASON_TICKETS = 2333   # season-ticket holders (also see lib/corrections.py)
+EST_SPONSORS = 285          # sponsor allocation
+EST_VIP = 296               # VIP allocation
+EST_EXTRA = 393             # extra allocation in the "w/ est." breakdown line
+EST_DEDUCT = 2864           # deducted in the "w/o est. season tickets" line
+STADIUM_CAPACITY = 15000    # denominator for the %-of-capacity bar
+
+
 def generate_error_html(error_message, last_successful_run=None):
     """Generate HTML error page.
 
@@ -236,9 +251,11 @@ def generate_page(db_path, out_path, template_dir='templates'):
                 "avail": latest[2],
             }
 
-            # Calculate capacity percentage (assuming ~15000 capacity)
-            total_sold = latest[1] + 2333 + 285 + 296  # w/ Sponsors, VIP, etc.
-            capacity = int((total_sold / 15000) * 100)
+            # Calculate capacity percentage from the estimated total (online
+            # sales + season tickets / sponsors / VIP) against stadium capacity.
+            total_sold = (latest[1]
+                          + EST_SEASON_TICKETS + EST_SPONSORS + EST_VIP)
+            capacity = int((total_sold / STADIUM_CAPACITY) * 100)
             event_data["capacity_percent"] = capacity
 
             # Calculate sales velocity
@@ -390,8 +407,11 @@ def generate_page(db_path, out_path, template_dir='templates'):
         # Last updated timestamp
         last_updated = now.strftime('%Y-%m-%d %H:%M:%S')
 
-        html_content = ticket_tmpl.render(events=events, img=img, past_events=past_events,
-                                         season_summary=season_summary, last_updated=last_updated)
+        html_content = ticket_tmpl.render(
+            events=events, img=img, past_events=past_events,
+            season_summary=season_summary, last_updated=last_updated,
+            EST_SEASON_TICKETS=EST_SEASON_TICKETS, EST_SPONSORS=EST_SPONSORS,
+            EST_VIP=EST_VIP, EST_EXTRA=EST_EXTRA, EST_DEDUCT=EST_DEDUCT)
 
         # Write to output file
         out_path.write_text(html_content, encoding='utf-8')
