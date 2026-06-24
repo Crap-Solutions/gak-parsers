@@ -1,4 +1,5 @@
-"""Tests for the configurable stdout log level (--log-level / $GAK_LOG_LEVEL).
+"""Tests for the shared logging setup (gak_common.log) and each cron script's
+wiring of it.
 
 The key contract for cron users: setting the level to WARNING must silence
 INFO on stdout (so successful cron runs produce no output -> no mail) while
@@ -9,27 +10,26 @@ import logging
 
 import pytest
 
-
-# --- _resolve_log_level precedence (flag > env > default) ---
-
-@pytest.mark.parametrize("mod", ["reddit_create", "tippspiel_table", "ticket_fetch"])
-def test_resolve_level_default(mod, request):
-    m = request.getfixturevalue(mod)
-    assert m._resolve_log_level(None) == logging.INFO
+import gak_common.log as gak_log
 
 
-@pytest.mark.parametrize("mod", ["reddit_create", "tippspiel_table", "ticket_fetch"])
-def test_resolve_level_env_used_when_no_flag(mod, request, monkeypatch):
-    m = request.getfixturevalue(mod)
+# --- resolve_log_level: precedence (flag > env > default) and parsing ---
+# Logic lives once in gak_common.log now; the per-script wiring is exercised
+# by test_warning_level_silences_stdout_but_keeps_file below.
+
+def test_resolve_level_default(monkeypatch):
+    monkeypatch.delenv("GAK_LOG_LEVEL", raising=False)
+    assert gak_log.resolve_log_level(None) == logging.INFO
+
+
+def test_resolve_level_env_used_when_no_flag(monkeypatch):
     monkeypatch.setenv("GAK_LOG_LEVEL", "WARNING")
-    assert m._resolve_log_level(None) == logging.WARNING
+    assert gak_log.resolve_log_level(None) == logging.WARNING
 
 
-@pytest.mark.parametrize("mod", ["reddit_create", "tippspiel_table", "ticket_fetch"])
-def test_resolve_level_flag_beats_env(mod, request, monkeypatch):
-    m = request.getfixturevalue(mod)
+def test_resolve_level_flag_beats_env(monkeypatch):
     monkeypatch.setenv("GAK_LOG_LEVEL", "ERROR")
-    assert m._resolve_log_level("DEBUG") == logging.DEBUG
+    assert gak_log.resolve_log_level("DEBUG") == logging.DEBUG
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -42,16 +42,19 @@ def test_resolve_level_flag_beats_env(mod, request, monkeypatch):
     ("20", logging.INFO),           # numeric
     ("30", logging.WARNING),
 ])
-def test_resolve_level_named_and_numeric(reddit_create, name, expected):
-    assert reddit_create._resolve_log_level(name) == expected
+def test_resolve_level_named_and_numeric(name, expected):
+    assert gak_log.resolve_log_level(name) == expected
 
 
-def test_resolve_level_invalid_falls_back_to_info(reddit_create, capsys):
-    assert reddit_create._resolve_log_level("NOPE") == logging.INFO
+def test_resolve_level_invalid_falls_back_to_info(capsys):
+    assert gak_log.resolve_log_level("NOPE") == logging.INFO
     assert "invalid log level" in capsys.readouterr().err
 
 
 # --- contract: WARNING suppresses INFO on stdout, keeps it in the file ---
+# Per-script: reddit/tippspiel call the shared setup_logging; ticket-fetch
+# wires its handlers inline in main() (it has bespoke file-log/grace handling).
+# Each must still honour the WARNING-silences-stdout contract.
 
 def _capture_stdout_handler(modobj):
     """Return the StreamHandler that writes to stdout (not a FileHandler)."""
@@ -72,10 +75,10 @@ def test_warning_level_silences_stdout_but_keeps_file(setup, request, tmp_path, 
 
     if setup == "reddit":
         m = request.getfixturevalue("reddit_create")
-        m.setup_logging(str(tmp_path / "r.log"), stdout_level=m._resolve_log_level("WARNING"))
+        m.setup_logging(str(tmp_path / "r.log"), stdout_level=m.resolve_log_level("WARNING"))
     elif setup == "tippspiel":
         m = request.getfixturevalue("tippspiel_table")
-        m.setup_logging(str(tmp_path / "t.log"), stdout_level=m._resolve_log_level("WARNING"))
+        m.setup_logging(str(tmp_path / "t.log"), stdout_level=m.resolve_log_level("WARNING"))
     else:
         # ticket-fetch applies the level to existing stdout StreamHandlers
         # in main(); mirror that here with a buffer-backed handler so we can
@@ -84,7 +87,7 @@ def test_warning_level_silences_stdout_but_keeps_file(setup, request, tmp_path, 
         logging.getLogger().setLevel(logging.INFO)
         stdout_handler = logging.StreamHandler(buf)
         logging.getLogger().addHandler(stdout_handler)
-        lvl = m._resolve_log_level("WARNING")
+        lvl = m.resolve_log_level("WARNING")
         for h in logging.getLogger().handlers:
             if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
                 h.setLevel(lvl)
