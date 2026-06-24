@@ -172,9 +172,9 @@
 <div class="event">
     <h1>{{event["title"]}}</h1>
     <p>Available: {{event["avail"]}}</p>
-    <p>Sold (w/o Sponsors, VIP, etc.): {{event["sold"] + 2333 + 285 + 296}}</p>
-    <p>Sold (w/o est. Season tickets, Sponsors, VIP, etc.): {{event["sold"] - 2864}}</p>
-    <p>Sold (w est. Sponsors, VIP, etc.): {{event["sold"] + 393 + 2333 + 285 + 296}}</p>
+    <p>Sold (w/o Sponsors, VIP, etc.): {{event["sold"] + EST_SEASON_TICKETS + EST_SPONSORS + EST_VIP}}</p>
+    <p>Sold (w/o est. Season tickets, Sponsors, VIP, etc.): {{event["sold"] - EST_DEDUCT}}</p>
+    <p>Sold (w est. Sponsors, VIP, etc.): {{event["sold"] + EST_EXTRA + EST_SEASON_TICKETS + EST_SPONSORS + EST_VIP}}</p>
     {% if event.capacity_percent %}
     <p>Capacity: {{event.capacity_percent}}%</p>
     {% endif %}
