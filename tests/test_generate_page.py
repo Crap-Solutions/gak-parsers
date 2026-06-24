@@ -74,3 +74,39 @@ def test_generate_page_uses_single_readonly_connection(ticket_fetch, tmp_path, m
     assert calls["init_db"] == 0, "generate_page must not open a read-write connection"
     assert calls["open_ro"] == 1, \
         "generate_page must use exactly one read-only connection"
+
+
+def test_capacity_percent_uses_raw_sold_not_offset(ticket_fetch, tmp_path, monkeypatch):
+    """Capacity % is raw online-sold / stadium capacity, not the old
+    unrecoverable offset estimate (latest[1] + 2333 + 285 + 296).
+
+    For SOLD=7500 that is 50%; the removed offset formula gave 69%, so this
+    also pins that the three invented attendance estimates stay out of the
+    rendered page.
+    """
+    db_path = tmp_path / "cap.db"
+    conn = ticket_fetch.db.init_db(str(db_path))
+    conn.execute(
+        "INSERT INTO EVENTS (ID,TITLE,DATETIME,SELLFROM,SELLTO) "
+        "VALUES (?,?,?,?,?)",
+        ("evt1", "GAK 1902 : Rival", "2099-01-01T20:00:00",
+         "2099-01-01T00:00:00", "2099-01-01T20:00:00"))
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH,SOLD,AVAILABLE,TIMESTAMP) "
+        "VALUES (?,?,?,?)",
+        ("evt1", 7500, 1000, "2099-01-01T10:00:00"))
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(ticket_fetch.graph, "generate_graph", lambda path: "STUB")
+    out = tmp_path / "index.html"
+    templates = Path(ticket_fetch.__file__).parent / "templates"
+    assert ticket_fetch.generate_page(db_path, out, str(templates)) is True
+
+    html = out.read_text()
+    # honest floor: 7500 / 15000 = 50% (the offset formula gave 69%)
+    assert "Capacity (online sold): 50%" in html
+    assert "Sold (online): 7500" in html
+    # the three invented attendance estimates must be gone
+    assert "w/o Sponsors, VIP" not in html
+    assert "w est. Sponsors, VIP" not in html

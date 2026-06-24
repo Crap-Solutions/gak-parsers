@@ -27,6 +27,13 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+# Total stadium seat capacity -- the one documented figure here (commit
+# d701f6c: "capacity percentage display based on 15000 stadium capacity").
+# Used for the capacity-% display. The undocumented attendance-offset
+# estimates that used to be added to the raw sold count were removed in
+# favor of an honest floor; see generate_page().
+STADIUM_CAPACITY = 15000
+
 
 # Setup logging
 logging.basicConfig(
@@ -236,9 +243,14 @@ def generate_page(db_path, out_path, template_dir='templates'):
                 "avail": latest[2],
             }
 
-            # Calculate capacity percentage (assuming ~15000 capacity)
-            total_sold = latest[1] + 2333 + 285 + 296  # w/ Sponsors, VIP, etc.
-            capacity = int((total_sold / 15000) * 100)
+            # Share of the stadium's seats that show as sold in the
+            # public/online seat map. This is an honest floor on true
+            # attendance, not an estimate of it: season, sponsor and VIP
+            # seats are allocated outside the online map and so aren't
+            # counted. The previous offset-based estimate
+            # (latest[1] + 2333 + 285 + 296) was unrecoverable magic (origin
+            # "IMP: graphic", no documentation) and has been removed.
+            capacity = int((latest[1] / STADIUM_CAPACITY) * 100)
             event_data["capacity_percent"] = capacity
 
             # Calculate sales velocity
