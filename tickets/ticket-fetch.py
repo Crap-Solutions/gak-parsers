@@ -17,7 +17,7 @@ from pathlib import Path
 
 import jinja2
 
-from lib import db, api, graph
+from lib import db, api, graph, corrections
 
 import matplotlib
 matplotlib.use('Agg')
@@ -117,22 +117,6 @@ def generate_empty_html(message="No upcoming events found"):
 </html>'''
 
 
-def apply_ticket_corrections(event_id, tickets_sold, h_diff):
-    """Apply data corrections for known ticket reporting issues."""
-    if event_id == "456e9a8a-ce64-4580-b9e0-3405a810c696":
-        if tickets_sold >= 2302:
-            tickets_sold = tickets_sold - 1939
-    if event_id == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
-        if tickets_sold >= 5100 and h_diff > 74.20:
-            tickets_sold = tickets_sold - 285
-    if event_id == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
-        if h_diff < 96.35:
-            tickets_sold = tickets_sold + 296 + 285
-        if h_diff < 49.8:
-            tickets_sold = tickets_sold + 2333
-    return tickets_sold
-
-
 def generate_mini_graph(event_id, event_time, conn):
     """Generate mini graph for a single event. Returns base64-encoded PNG or None.
 
@@ -158,7 +142,7 @@ def generate_mini_graph(event_id, event_time, conn):
                 h_diff = (event_time_naive - tickets_time).total_seconds() / 3600
 
                 # Apply corrections
-                tickets_sold = apply_ticket_corrections(event_id, entry[1], h_diff)
+                tickets_sold = corrections.apply_ticket_corrections(event_id, entry[1], h_diff)
 
                 hours.append(h_diff)
                 sold.append(tickets_sold)
@@ -328,6 +312,20 @@ def generate_page(db_path, out_path, template_dir='templates'):
         entries = db.get_entries_for_event(conn, event_id)
         if entries:
             latest = entries[-1]
+            # Apply the same per-event corrections the mini graph uses, so the
+            # card's "Sold" figure (and the ranking / season average derived
+            # from it) matches the corrected curve plotted beside it, instead
+            # of the raw upstream number.
+            corrected_sold = latest[1]
+            try:
+                latest_ts = dateutil.parser.parse(latest[3])
+                if latest_ts.tzinfo is not None:
+                    latest_ts = latest_ts.replace(tzinfo=None)
+                latest_h_diff = (event_time - latest_ts).total_seconds() / 3600
+                corrected_sold = corrections.apply_ticket_corrections(
+                    event_id, latest[1], latest_h_diff)
+            except (dateutil.parser.ParserError, ValueError) as e:
+                logger.warning(f"Could not parse timestamp for past event {event_id}: {e}")
             # Extract away team name (remove "GAK 1902 : " prefix)
             title = entry[1]
             if " : " in title:
@@ -337,7 +335,7 @@ def generate_page(db_path, out_path, template_dir='templates'):
             past_events.append({
                 "title": title,
                 "date": event_time.strftime('%Y-%m-%d'),
-                "sold": latest[1],
+                "sold": corrected_sold,
                 "graph": mini_graph,
                 "event_id": event_id,
             })
