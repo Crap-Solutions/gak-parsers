@@ -118,12 +118,14 @@ def apply_ticket_corrections(event_id, tickets_sold, h_diff):
     return tickets_sold
 
 
-def generate_mini_graph(event_id, event_time, db_path):
-    """Generate mini graph for a single event. Returns base64-encoded PNG or None."""
+def generate_mini_graph(event_id, event_time, conn):
+    """Generate mini graph for a single event. Returns base64-encoded PNG or None.
+
+    Reads through the caller-supplied (read-only) connection instead of opening
+    one per event, so rendering N past-event cards doesn't open N connections.
+    """
     try:
-        conn = db.init_db(str(db_path))
         entries = db.get_entries_for_event(conn, event_id)
-        conn.close()
 
         if not entries:
             return None
@@ -182,9 +184,11 @@ def generate_mini_graph(event_id, event_time, db_path):
 
 def generate_page(db_path, out_path, template_dir='templates'):
     """Generate HTML page from database."""
-    # Connect to database
+    # Connect to database. Read-only: generate_page only reads, and the data
+    # was already written by the fetch loop in main(); a shared connection is
+    # reused for every event + mini-graph instead of one per section/card.
     try:
-        conn = db.init_db(str(db_path))
+        conn = db.open_connection(str(db_path), read_only=True)
     except Exception as e:
         logger.error(f"Failed to connect to database: {e}")
         html_content = generate_error_html(f"Database connection failed: {e}")
@@ -275,18 +279,16 @@ def generate_page(db_path, out_path, template_dir='templates'):
 
             events.append(event_data)
 
-    conn.close()
-
     if not events:
         logger.info("No future events to display")
         html_content = generate_empty_html()
         out_path.write_text(html_content, encoding='utf-8')
+        conn.close()
         return False
 
-    # Fetch past events (from current season - July onwards)
-    conn = db.init_db(str(db_path))
-    events_data = db.get_events(conn)
-
+    # Fetch past events (from current season - July onwards). Reuse the same
+    # read-only connection and the event list already fetched above; nothing
+    # was written so it is still current.
     # Get current year, if we're before July, use last year's July
     current_year = now.year
     if now.month < 7:
@@ -316,7 +318,7 @@ def generate_page(db_path, out_path, template_dir='templates'):
             if " : " in title:
                 title = title.split(" : ", 1)[1]
             # Generate mini graph for this event
-            mini_graph = generate_mini_graph(event_id, event_time, db_path)
+            mini_graph = generate_mini_graph(event_id, event_time, conn)
             past_events.append({
                 "title": title,
                 "date": event_time.strftime('%Y-%m-%d'),
