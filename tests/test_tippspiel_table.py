@@ -78,6 +78,23 @@ def test_get_table_data_weight_matrix(tippspiel_table):
     assert table == {"p1SC": 1, "pFSC": 2, "p2SC": 3, "pFSC1": 6, "pW": 12}
 
 
+def test_get_table_data_unknown_score_does_not_crash(tippspiel_table):
+    # a stray code outside the known set must be ignored, not raise KeyError
+    results = [{"alice": {"score": "BOGUS", "obg": "0"}}]
+    table = tippspiel_table.get_table_data(results)
+    assert table[0][0] == "alice"
+    assert table[0][-1] == 0   # unknown code scores nothing
+
+
+def test_get_table_data_zero_score_counts_as_played(tippspiel_table):
+    # '0' is a legitimate no-points outcome: still counts as played, with obg
+    results = [{"alice": {"score": "0", "obg": "3"}}]
+    row = tippspiel_table.get_table_data(results)[0]
+    assert row[1] == 1      # played
+    assert row[-2] == 3     # obg tiebreaker
+    assert row[-1] == 0     # zero points
+
+
 # --- load_credentials: non-interactive hang prevention ---
 
 def test_load_credentials_non_interactive_exits(tippspiel_table, tmp_path, monkeypatch):
