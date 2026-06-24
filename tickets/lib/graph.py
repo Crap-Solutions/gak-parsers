@@ -13,6 +13,8 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for cron
 import matplotlib.pyplot as plt
 
+from . import corrections
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,18 +76,10 @@ def generate_graph(db_path):
                         h_diff = (event['time']-tickets['time']).total_seconds() / 3600
                         tickets['diff'] = h_diff
 
-                        # Apply corrections (TODO: remove these hardcoded fixes)
-                        if event['id'] == "456e9a8a-ce64-4580-b9e0-3405a810c696":
-                            if tickets['sold'] >= 2302:
-                                tickets['sold'] = tickets['sold'] - 1939
-                        if event['id'] == "aeee2d94-edae-4a6d-a65c-f2ae274361ef":
-                            if tickets['sold'] >= 5100 and tickets['diff'] > 74.20:
-                                tickets['sold'] = tickets['sold'] - 285
-                        if event['id'] == "2e9e16ba-e8c3-409e-8c41-d7e6ddfaab40":
-                            if tickets['diff'] < 96.35:
-                                tickets['sold'] = tickets['sold'] + 296 + 285
-                            if tickets['diff'] < 49.8:
-                                tickets['sold'] = tickets['sold'] + 2333
+                        # Apply per-event upstream-data corrections
+                        # (single source of truth: lib/corrections.py).
+                        tickets['sold'] = corrections.apply_ticket_corrections(
+                            event['id'], tickets['sold'], tickets['diff'])
                         hours.append(h_diff)
                         sold.append(tickets['sold'])
 
