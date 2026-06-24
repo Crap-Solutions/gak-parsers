@@ -38,11 +38,12 @@ def _render(ticket_fetch, sold):
 
 def test_sold_breakdown_matches_original_formulas(ticket_fetch):
     # sold=1000 -> the three breakdown lines, computed from the original
-    # literals (2333/285/296/393/2864), must be unchanged.
+    # literals (2333/285/296/393/2864), must be unchanged. Only the label
+    # wording changed (now honest about incl./excl.); the numbers did not.
     out = _render(ticket_fetch, 1000)
-    assert "Sold (w/o Sponsors, VIP, etc.): 3914" in out          # 1000+2333+285+296
-    assert "Sold (w/o est. Season tickets, Sponsors, VIP, etc.): -1864" in out  # 1000-2864
-    assert "Sold (w est. Sponsors, VIP, etc.): 4307" in out       # 1000+393+2333+285+296
+    assert "Sold (incl. est. season tickets, sponsors &amp; VIP): 3914" in out   # 1000+2333+285+296
+    assert "Sold (excl. est. season tickets, sponsors &amp; VIP): -1864" in out # 1000-2864
+    assert "Sold (incl. est. season tickets, sponsors, VIP &amp; extra): 4307" in out  # 1000+393+2333+285+296
 
 
 def test_capacity_bar_uses_stadium_capacity(ticket_fetch):
