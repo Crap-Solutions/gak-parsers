@@ -696,6 +696,11 @@ def main():
             logger.error(f"Failed to parse event {event_id}, skipping")
 
     conn.commit()
+    # Bound ENTRIES growth: trim samples older than the retention window.
+    # Safe after the commit; a failure here is logged, not fatal.
+    pruned = db.prune_old_entries(conn)
+    if pruned:
+        logger.info(f"Pruned {pruned} old entr{'y' if pruned == 1 else 'ies'}")
     conn.close()
 
     logger.info(f"Updated {events_updated} event(s)")

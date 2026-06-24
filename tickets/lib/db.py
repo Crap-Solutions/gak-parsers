@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 # PRAGMA busy_timeout (milliseconds) for robustness.
 DB_TIMEOUT = 30
 
+# ENTRIES rows older than this are pruned each run. One row is inserted per
+# event per 5-minute cron poll, so the table would otherwise grow without
+# bound; display only ever looks at the last ~600 hours (main graph) / 300
+# hours (mini graphs), so ~25 days is a hard floor and 60 gives a wide
+# margin for ad-hoc analysis without bloating every query.
+RETENTION_DAYS = 60
+
 
 def open_connection(db_path, read_only=False):
     """Open a SQLite connection with a consistent busy timeout.
@@ -57,6 +64,14 @@ def init_db(db_file):
                 AVAILABLE   INTEGER     NOT NULL,
                 TIMESTAMP   DATETIME    NOT NULL    DEFAULT CURRENT_TIMESTAMP
             );''')
+
+        # get_entries_for_event filters WHERE MATCH=? and renderers take the
+        # last row as "latest"; without this index every per-event lookup is a
+        # full scan, which slows as the table grows (see prune_old_entries).
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS IDX_ENTRIES_MATCH
+            ON ENTRIES(MATCH, TIMESTAMP)
+            ''')
         return conn
     except sqlite3.Error as e:
         logger.error(f"Failed to initialize database: {e}")
@@ -93,9 +108,15 @@ def get_events(conn):
 
 
 def get_entries_for_event(conn, event_id):
-    """Get all entries for a specific event."""
+    """Get all entries for a specific event, oldest first.
+
+    Ordered by TIMESTAMP so callers taking [-1] get the genuinely latest
+    sample regardless of physical row order; served by IDX_ENTRIES_MATCH.
+    """
     try:
-        cur = conn.execute("SELECT * FROM ENTRIES WHERE MATCH=?", (event_id,))
+        cur = conn.execute(
+            "SELECT * FROM ENTRIES WHERE MATCH=? ORDER BY TIMESTAMP",
+            (event_id,))
         return cur.fetchall()
     except sqlite3.Error as e:
         logger.error(f"Failed to get entries for event {event_id}: {e}")
@@ -119,3 +140,23 @@ def get_events_for_graph(conn):
     except sqlite3.Error as e:
         logger.error(f"Failed to get events for graph: {e}")
         return []
+
+
+def prune_old_entries(conn, days=RETENTION_DAYS):
+    """Delete ENTRIES rows older than ``days`` to bound table growth.
+
+    Safe to run after a successful fetch+commit. Only the high-volume sales
+    samples are trimmed; EVENTS metadata is preserved. TIMESTAMP and
+    datetime('now') are both UTC, so the comparison is consistent. Returns
+    the number of rows deleted, or 0 on error (a failed prune is logged but
+    never fatal -- it just retries next run).
+    """
+    try:
+        cur = conn.execute(
+            "DELETE FROM ENTRIES WHERE TIMESTAMP < datetime('now', ?)",
+            (f'-{int(days)} days',))
+        conn.commit()
+        return cur.rowcount
+    except sqlite3.Error as e:
+        logger.warning(f"Failed to prune old entries: {e}")
+        return 0

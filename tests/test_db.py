@@ -107,3 +107,73 @@ def test_busy_timeout_honored_under_contention(tmp_path, monkeypatch):
 
     # waited roughly DB_TIMEOUT, not zero, not forever
     assert 0.3 <= elapsed < 3.0, f"unexpected wait {elapsed:.2f}s"
+
+
+# --- schema: ENTRIES index ---
+
+def test_init_db_creates_entries_index(tmp_path):
+    conn = db.init_db(str(tmp_path / "t.db"))
+    idx = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'")}
+    conn.close()
+    assert "IDX_ENTRIES_MATCH" in idx
+
+
+def test_get_entries_for_event_is_chronological(tmp_path):
+    # callers take [-1] as "latest"; ordering must not depend on physical row
+    conn = db.init_db(str(tmp_path / "t.db"))
+    for sold, ts in [(1, "2020-01-01 00:00:00"),
+                     (2, "2021-01-01 00:00:00"),
+                     (3, "2022-01-01 00:00:00")]:
+        conn.execute(
+            "INSERT INTO ENTRIES (MATCH, SOLD, AVAILABLE, TIMESTAMP) "
+            "VALUES ('m', ?, 1, ?)", (sold, ts))
+    conn.commit()
+    rows = db.get_entries_for_event(conn, "m")
+    conn.close()
+    assert [r[1] for r in rows] == [1, 2, 3]
+
+
+# --- retention: prune_old_entries ---
+
+def test_prune_old_entries_deletes_old_keeps_recent(tmp_path):
+    conn = db.init_db(str(tmp_path / "t.db"))
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH, SOLD, AVAILABLE, TIMESTAMP) "
+        "VALUES ('old', 1, 1, '2020-01-01 00:00:00')")
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH, SOLD, AVAILABLE, TIMESTAMP) "
+        "VALUES ('new', 2, 2, datetime('now'))")
+    conn.commit()
+    deleted = db.prune_old_entries(conn, days=30)
+    assert deleted == 1
+    rows = conn.execute("SELECT match FROM ENTRIES ORDER BY TIMESTAMP").fetchall()
+    conn.close()
+    assert rows == [("new",)]
+
+
+def test_prune_old_entries_preserves_events_metadata(tmp_path):
+    conn = db.init_db(str(tmp_path / "t.db"))
+    conn.execute(
+        "INSERT INTO EVENTS (ID, TITLE, DATETIME, SELLFROM, SELLTO) "
+        "VALUES ('e', 't', '2020-01-01', '2020-01-01', '2020-01-02')")
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH, SOLD, AVAILABLE, TIMESTAMP) "
+        "VALUES ('e', 1, 1, '2020-01-01 00:00:00')")
+    conn.commit()
+    db.prune_old_entries(conn, days=1)
+    events = conn.execute("SELECT id FROM EVENTS").fetchall()
+    entries = conn.execute("SELECT match FROM ENTRIES").fetchall()
+    conn.close()
+    assert events == [("e",)]   # metadata kept
+    assert entries == []        # sample pruned
+
+
+def test_prune_old_entries_nothing_to_delete(tmp_path):
+    conn = db.init_db(str(tmp_path / "t.db"))
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH, SOLD, AVAILABLE, TIMESTAMP) "
+        "VALUES ('m', 1, 1, datetime('now'))")
+    conn.commit()
+    assert db.prune_old_entries(conn, days=365) == 0
+    conn.close()
