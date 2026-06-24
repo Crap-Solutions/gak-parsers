@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
 """Calculate Tippspiel rankings and write them back to Google Sheets.
 
 Designed to run from cron. The interactive OAuth flow (which opens a
@@ -6,8 +6,6 @@ browser) is only attempted when a TTY is available; in a cron/non-interactive
 environment an expired or missing token is reported and the job exits
 non-zero instead of hanging forever.
 """
-from __future__ import print_function
-
 import argparse
 import logging
 import os
@@ -179,10 +177,22 @@ def get_table_data(results):
             e = res.get(p, {})
             if not e:
                 continue
-            score = e['score']
-            if score != '0':
-                scores[e['score']] += 1
-            data[-2] += int(e['obg'])
+            # Parse the tiebreaker first so a corrupt cell skips the whole
+            # round (no partial increment to scores) instead of crashing the
+            # run -- a single stray text value in the sheet used to kill cron.
+            try:
+                obg = int(e['obg'])
+            except (ValueError, TypeError, KeyError) as ex:
+                logger.warning(f"Invalid obg {e.get('obg')!r} for player "
+                               f"{p!r}: {ex}; skipping round")
+                continue
+            score = e.get('score')
+            if score in scores:
+                scores[score] += 1
+            elif score not in ('0', None):
+                logger.warning(f"Unknown tippspiel score {score!r} for player "
+                               f"{p!r}; skipping")
+            data[-2] += obg
             data[1] += 1
         data[2] = scores
         data[-1] = scores["1SC"] + scores["FSC"]*2 + scores["2SC"]*3 + \

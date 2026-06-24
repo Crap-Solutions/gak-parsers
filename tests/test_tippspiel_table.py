@@ -1,4 +1,5 @@
 """Tests for tippspiel/tippspiel-table.py error handling and scoring logic."""
+import logging
 from unittest import mock
 
 import pytest
@@ -92,3 +93,37 @@ def test_load_credentials_non_interactive_exits(tippspiel_table, tmp_path, monke
     with pytest.raises(SystemExit) as exc:
         tippspiel_table.load_credentials()
     assert exc.value.code == 2
+
+
+# --- get_table_data: dirty-sheet resilience ---
+# A single stray text value in the Google Sheet used to crash the whole run.
+# parse_data skips malformed rows, but get_table_data assumed clean input.
+
+def test_get_table_data_skips_unknown_score(tippspiel_table, caplog):
+    """An unrecognized score value is skipped with a warning, not a KeyError."""
+    results = [{"p": {"score": "BOGUS", "obg": "1"}}]
+    with caplog.at_level(logging.WARNING, logger=tippspiel_table.logger.name):
+        table = tippspiel_table.get_table_data(results)
+    assert table[0][0] == "p"
+    assert table[0][-1] == 0          # BOGUS contributed no points
+    assert "BOGUS" in caplog.text      # and it was logged
+
+
+def test_get_table_data_skips_non_numeric_obg(tippspiel_table, caplog):
+    """A non-numeric obg cell skips the round entirely, not a ValueError crash."""
+    results = [{"p": {"score": "W", "obg": "oops"}}]
+    with caplog.at_level(logging.WARNING, logger=tippspiel_table.logger.name):
+        table = tippspiel_table.get_table_data(results)
+    assert table[0][1] == 0           # played (round skipped)
+    assert table[0][-1] == 0          # points (the 'W' was not counted)
+    assert "oops" in caplog.text
+
+
+def test_get_table_data_valid_inputs_unchanged(tippspiel_table):
+    """Hardening must not alter scoring for well-formed data."""
+    results = [{
+        "alice": {"score": "W", "obg": "2"},   # 1 x W = 12
+        "bob": {"score": "1SC", "obg": "0"},   # 1 x 1SC = 1
+    }]
+    table = {row[0]: row[-1] for row in tippspiel_table.get_table_data(results)}
+    assert table == {"alice": 12, "bob": 1}

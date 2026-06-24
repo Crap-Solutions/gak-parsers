@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 def generate_graph(db_path):
     """Generate sales graph with error handling. Returns base64-encoded PNG."""
+    conn = None
     try:
         # Import here to avoid a circular import.
         from .db import open_connection, get_events_for_graph
@@ -122,7 +123,6 @@ def generate_graph(db_path):
         img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
 
         matplotlib.pyplot.close()
-        conn.close()
         return img
 
     except sqlite3.Error as e:
@@ -132,3 +132,8 @@ def generate_graph(db_path):
         logger.error(f"Error generating graph: {e}")
         logger.debug(traceback.format_exc())
         return None
+    finally:
+        # Close on every path (incl. the early `return None` branches and
+        # exceptions); previously the connection only closed on success.
+        if conn is not None:
+            conn.close()

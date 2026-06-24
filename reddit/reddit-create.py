@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
 """Update r/grazerak sidebar and gameplan sticky post.
 
 Designed to run from cron. All network and Reddit-API operations are
