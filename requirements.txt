@@ -1,0 +1,18 @@
+# Runtime + test dependencies for the whole repo.
+#
+# The test suite imports all three cron scripts (tests/conftest.py loads
+# reddit-create.py, tippspiel-table.py and ticket-fetch.py), so running it
+# needs every tool's dependencies, not just pytest. Install a tool's own
+# subset for production deployments; this file is the union used by CI and
+# local development.
+praw
+prawcore
+requests
+jinja2
+matplotlib
+python-dateutil
+numpy
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+pytest
