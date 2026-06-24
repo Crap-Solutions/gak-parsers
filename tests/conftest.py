@@ -14,6 +14,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Make the shared gak_common package importable directly (the scripts also
+# bootstrap this themselves, but tests import gak_common.log on their own).
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 # Make tickets/lib importable for direct module tests (test_db.py).
 TICKETS = ROOT / "tickets"
 if str(TICKETS) not in sys.path:

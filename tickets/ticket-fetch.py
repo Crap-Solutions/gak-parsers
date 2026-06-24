@@ -15,6 +15,10 @@ import datetime
 import dateutil.parser
 from pathlib import Path
 
+# gak_common lives at the repo root (one level up from this script).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from gak_common.log import resolve_log_level
+
 import jinja2
 
 from lib import db, api, graph, corrections
@@ -426,28 +430,6 @@ def _resolve_log_file(candidates):
     return None
 
 
-def _resolve_log_level(cli_level):
-    """Resolve the effective stdout log level.
-
-    Precedence: --log-level flag > $GAK_LOG_LEVEL env > INFO default.
-    Accepts level names (DEBUG/INFO/WARNING/ERROR/CRITICAL) or numbers.
-    This only affects the stdout handler, so cron can run at WARNING
-    (silent on success, mails on failure) while the file log keeps INFO.
-    """
-    raw = cli_level or os.environ.get("GAK_LOG_LEVEL")
-    if not raw:
-        return logging.INFO
-    try:
-        return int(raw)
-    except ValueError:
-        pass
-    level = logging.getLevelName(str(raw).upper())
-    if isinstance(level, int):
-        return level
-    print(f"WARNING: invalid log level {raw!r}, defaulting to INFO", file=sys.stderr)
-    return logging.INFO
-
-
 # The upstream ticket server has regular, short downtimes. Cron polls every
 # 5 minutes, so alerting on the first failure of every outage would flood the
 # inbox. Instead we suppress the cron email (stdout) for this long after a
@@ -589,7 +571,7 @@ def main():
     # Apply the resolved stdout log level to the stdout handler (created at
     # module import via basicConfig on the root logger). The file handler
     # added below stays at INFO, so on-disk detail is always preserved.
-    stdout_level = _resolve_log_level(args.log_level)
+    stdout_level = resolve_log_level(args.log_level)
     logging.getLogger().setLevel(logging.INFO)
     for h in logging.getLogger().handlers:
         if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
