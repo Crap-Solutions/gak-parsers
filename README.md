@@ -128,15 +128,29 @@ First run of tippspiel-table.py will prompt for OAuth authorization and generate
 
 ## Development
 
-Install dependencies:
+Install dependencies (the repo root `requirements.txt` is the union of
+every tool's deps, used by CI and needed to run the test suite, which
+imports all three scripts):
+
+```bash
+pip install -r requirements.txt
+```
+
+For a production deployment of a single tool, install only its subset:
 
 ```bash
 # Reddit
-pip install praw requests jinja2
+pip install praw prawcore requests jinja2
 
 # Tickets
-pip install requests jinja2 matplotlib python-dateutil
+pip install requests jinja2 matplotlib python-dateutil numpy
 
 # Tippspiel
 pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+```
+
+Run the tests:
+
+```bash
+python -m pytest -q
 ```
