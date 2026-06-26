@@ -75,11 +75,12 @@ def get_gameplan(url, timeout=REQUEST_TIMEOUT):
     if not isinstance(dataset, dict) or 'all' not in dataset:
         logger.error("Gameplan response missing expected 'all' field")
         return None
-    if not dataset.get('league'):
-        # 'league' is indexed as dataset['league'][0]['league'] below to tag
-        # league games; a missing/empty list would raise IndexError and abort
-        # the whole run mid-loop.
-        logger.error("Gameplan response missing or empty 'league' field")
+    # 'league' is indexed as dataset['league'][0]['league'] inside the loop to
+    # tag league games. It's only reached when there are fixtures, so only
+    # require it then -- an empty schedule ({"all": []}) is a valid "no games"
+    # state, not an error.
+    if dataset['all'] and not dataset.get('league'):
+        logger.error("Gameplan response has fixtures but missing/empty 'league' field")
         return None
 
     gameplan = []
