@@ -177,3 +177,53 @@ def test_prune_old_entries_nothing_to_delete(tmp_path):
     conn.commit()
     assert db.prune_old_entries(conn, days=365) == 0
     conn.close()
+
+
+# --- events upsert (metadata refresh) ---
+
+def test_update_event_upserts_changed_metadata(tmp_path):
+    """update_event must refresh EVENTS metadata when upstream values change.
+    INSERT OR IGNORE used to silently keep stale title/datetimes, which could
+    misclassify an event's future/past window after a kickoff/time change."""
+    conn = db.init_db(str(tmp_path / "t.db"))
+    event = {"id": "e1", "title": "GAK 1902 : Old",
+             "dateTimeFrom": "2099-01-01T20:00:00",
+             "publiclyAvailableFrom": "2099-01-01T00:00:00",
+             "publiclyAvailableTo": "2099-01-01T20:00:00"}
+    entry = {"id": "e1", "sold": 10, "avail": 90}
+    assert db.update_event(conn, event, entry)
+    # upstream reschedules the kickoff and renames the fixture
+    event["title"] = "GAK 1902 : New"
+    event["dateTimeFrom"] = "2099-02-02T20:00:00"
+    assert db.update_event(conn, event, entry)
+    row = conn.execute(
+        "SELECT title, datetime, sellfrom, sellto FROM events WHERE id='e1'"
+    ).fetchone()
+    # a new ENTRIES sample is still appended each call (history is append-only)
+    n_entries = conn.execute(
+        "SELECT COUNT(*) FROM entries WHERE match='e1'"
+    ).fetchone()[0]
+    conn.close()
+    assert row == ("GAK 1902 : New", "2099-02-02T20:00:00",
+                   "2099-01-01T00:00:00", "2099-01-01T20:00:00")
+    assert n_entries == 2
+
+
+def test_update_event_keeps_metadata_when_unchanged(tmp_path):
+    """A repeat call with identical metadata is a no-op on EVENTS (idempotent)
+    while still recording a fresh ENTRIES sample."""
+    conn = db.init_db(str(tmp_path / "t.db"))
+    event = {"id": "e1", "title": "GAK 1902 : X",
+             "dateTimeFrom": "2099-01-01T20:00:00",
+             "publiclyAvailableFrom": "2099-01-01T00:00:00",
+             "publiclyAvailableTo": "2099-01-01T20:00:00"}
+    entry = {"id": "e1", "sold": 5, "avail": 95}
+    db.update_event(conn, event, entry)
+    db.update_event(conn, event, entry)
+    title = conn.execute("SELECT title FROM events WHERE id='e1'").fetchone()[0]
+    n_entries = conn.execute(
+        "SELECT COUNT(*) FROM entries WHERE match='e1'"
+    ).fetchone()[0]
+    conn.close()
+    assert title == "GAK 1902 : X"
+    assert n_entries == 2

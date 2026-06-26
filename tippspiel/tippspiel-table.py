@@ -85,8 +85,14 @@ def load_credentials():
 
 def _save_token(creds, creds_path):
     try:
-        with open(str(creds_path), 'w') as token:
+        # Restrictive perms: the file holds an OAuth refresh token. os.open
+        # only applies the mode on creation, so also chmod to cover the case
+        # of an existing token file from a prior, more permissive write.
+        fd = os.open(str(creds_path),
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as token:
             token.write(creds.to_json())
+        os.chmod(str(creds_path), 0o600)
     except OSError as e:
         logger.error(f"Could not persist token to {creds_path}: {e}")
 
@@ -200,7 +206,7 @@ def run():
         values = []
         for cnt, e in enumerate(table_data):
             values.append([cnt+1] + e[:2] + list(e[2].values()) + e[3:])
-        range_name = 'Tabelle!A2' + ":J" + str(len(values)+1)
+        range_name = 'Tabelle!A2:' + chr(ord('A') + 4 + len(SCORE_WEIGHTS)) + str(len(values)+1)
         sheet.values().update(spreadsheetId=SAMPLE_SPREADSHEET_ID,
                               range=range_name,
                               valueInputOption='USER_ENTERED',

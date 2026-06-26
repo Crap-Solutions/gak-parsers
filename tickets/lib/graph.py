@@ -110,7 +110,6 @@ def generate_graph(db_path):
         matplotlib.pyplot.savefig(tmpfile, format='png')
         img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
 
-        matplotlib.pyplot.close()
         return img
 
     except sqlite3.Error as e:
@@ -123,5 +122,8 @@ def generate_graph(db_path):
     finally:
         # Close on every path (incl. the early `return None` branches and
         # exceptions); previously the connection only closed on success.
+        # Also release the matplotlib figure, which used to leak on every
+        # non-success path (early returns + exceptions).
+        matplotlib.pyplot.close('all')
         if conn is not None:
             conn.close()

@@ -82,10 +82,15 @@ def update_event(conn, event, entry):
     """Update database with event and entry data."""
     try:
         conn.execute('''
-            INSERT OR IGNORE INTO EVENTS
+            INSERT INTO EVENTS
             (ID, TITLE, DATETIME, SELLFROM, SELLTO) VALUES
             (:id, :title, :dateTimeFrom, :publiclyAvailableFrom,
             :publiclyAvailableTo)
+            ON CONFLICT(ID) DO UPDATE SET
+              TITLE   = excluded.TITLE,
+              DATETIME = excluded.DATETIME,
+              SELLFROM = excluded.SELLFROM,
+              SELLTO   = excluded.SELLTO
             ''', event)
 
         conn.execute('''
