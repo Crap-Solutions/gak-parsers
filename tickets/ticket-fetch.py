@@ -177,19 +177,23 @@ def generate_mini_graph(event_id, event_time, conn):
 
         # Create mini graph
         fig, ax = plt.subplots(figsize=(3, 1.5))
-        ax.plot(filtered_hours, filtered_sold, color='#d9534f', linewidth=1.5)
-        ax.set_xlim([0, 300])
-        ax.invert_xaxis()
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_linewidth(0.5)
-        ax.grid(False)
+        try:
+            ax.plot(filtered_hours, filtered_sold, color='#d9534f', linewidth=1.5)
+            ax.set_xlim([0, 300])
+            ax.invert_xaxis()
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_linewidth(0.5)
+            ax.grid(False)
 
-        tmpfile = io.BytesIO()
-        plt.savefig(tmpfile, format='png', dpi=80, bbox_inches='tight', pad_inches=0.05)
-        img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
-        plt.close()
+            tmpfile = io.BytesIO()
+            plt.savefig(tmpfile, format='png', dpi=80, bbox_inches='tight', pad_inches=0.05)
+            img = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
+        finally:
+            # Release the figure on every path; previously a plotting error
+            # after subplots() left it open for the rest of the cron run.
+            plt.close(fig)
 
         return img
     except Exception as e:
@@ -226,7 +230,11 @@ def generate_page(db_path, out_path, template_dir='templates'):
         event_id = entry[0]
         try:
             event_time = dateutil.parser.parse(entry[2])
-            # Strip timezone info for comparison
+            # Normalise to UTC before stripping tz for naive comparison;
+            # graph.py does the same. Otherwise a non-UTC offset in the API
+            # string (e.g. +01:00) shifts the future/past classification.
+            if event_time.tzinfo is not None:
+                event_time = event_time.astimezone(datetime.timezone.utc)
             event_time = event_time.replace(tzinfo=None)
         except (dateutil.parser.ParserError, ValueError) as e:
             logger.warning(f"Error parsing date for event {entry[0]}: {e}")
@@ -265,7 +273,7 @@ def generate_page(db_path, out_path, template_dir='templates'):
                         if ts.tzinfo:
                             ts = ts.replace(tzinfo=None)
                         timestamps.append((ts, ent[1]))
-                    except:
+                    except Exception:
                         continue
 
                 if len(timestamps) >= 2:
@@ -318,6 +326,8 @@ def generate_page(db_path, out_path, template_dir='templates'):
         event_id = entry[0]
         try:
             event_time = dateutil.parser.parse(entry[2])
+            if event_time.tzinfo is not None:
+                event_time = event_time.astimezone(datetime.timezone.utc)
             event_time = event_time.replace(tzinfo=None)
         except (dateutil.parser.ParserError, ValueError):
             continue
@@ -384,7 +394,9 @@ def generate_page(db_path, out_path, template_dir='templates'):
     # Render HTML
     try:
         templ_path = Path(template_dir)
-        jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(str(templ_path)))
+        jenv = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(str(templ_path)),
+            autoescape=jinja2.select_autoescape(['html', 'tmpl']))
         ticket_tmpl = jenv.get_template("ticket-html.tmpl")
 
         # Last updated timestamp

@@ -64,3 +64,33 @@ def test_generate_graph_closes_connection_on_exception(tmp_path, monkeypatch):
 
     assert graph.generate_graph(str(tmp_path / "g.db")) is None
     _assert_closed(holder["conn"])
+
+
+def test_generate_graph_closes_figure_on_exception(tmp_path, monkeypatch):
+    """A plotting error must not leak the matplotlib figure.
+
+    generate_graph creates the figure before plotting; previously the figure
+    was only closed on the success path, so an exception after figure creation
+    left it open for the rest of the cron run."""
+    import matplotlib.pyplot as plt
+    conn = db.init_db(str(tmp_path / "g.db"))
+    conn.execute(
+        "INSERT INTO EVENTS (ID,TITLE,DATETIME,SELLFROM,SELLTO) "
+        "VALUES (?,?,?,?,?)",
+        ("evt1", "GAK 1902 : X", "2099-01-01T20:00:00+00:00",
+         "2099-01-01T00:00:00+00:00", "2099-01-01T20:00:00+00:00"))
+    conn.execute(
+        "INSERT INTO ENTRIES (MATCH,SOLD,AVAILABLE,TIMESTAMP) "
+        "VALUES (?,?,?,?)",
+        ("evt1", 100, 50, "2099-01-01T10:00:00+00:00"))
+    conn.commit()
+    conn.close()
+
+    plt.close("all")  # baseline: no leftover figures from earlier tests
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(graph.matplotlib.pyplot, "plot", _boom)
+
+    assert graph.generate_graph(str(tmp_path / "g.db")) is None
+    assert plt.get_fignums() == [], f"leaked figures: {plt.get_fignums()}"
