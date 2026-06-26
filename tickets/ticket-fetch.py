@@ -270,8 +270,13 @@ def generate_page(db_path, out_path, template_dir='templates'):
                     for ent in entries:
                         try:
                             ts = dateutil.parser.parse(ent[3])
-                            if ts.tzinfo:
-                                ts = ts.replace(tzinfo=None)
+                            # Normalise to UTC before stripping tz, matching
+                            # the event_time handling above; `now` is UTC-naive,
+                            # so a naive strip of a +02:00 value would shift the
+                            # window comparisons by the offset.
+                            if ts.tzinfo is not None:
+                                ts = ts.astimezone(datetime.timezone.utc)
+                            ts = ts.replace(tzinfo=None)
                             timestamps.append((ts, ent[1]))
                         except Exception:
                             continue

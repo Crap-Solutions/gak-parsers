@@ -157,9 +157,9 @@ def test_get_gp_title(reddit_create):
     assert reddit_create.get_gp_title(gp) == "Spielplan 2025/26"
 
 
-def test_get_gameplan_empty_league_returns_none(reddit_create):
-    """An empty 'league' list used to reach dataset['league'][0] and raise
-    IndexError mid-loop, aborting the run. It must be treated as invalid."""
+def test_get_gameplan_empty_league_with_fixtures_returns_none(reddit_create):
+    """Fixtures present but an empty 'league' list used to reach
+    dataset['league'][0] and raise IndexError mid-loop. Must be invalid."""
     resp = mock.Mock()
     resp.json.return_value = {
         "league": [],
@@ -172,9 +172,22 @@ def test_get_gameplan_empty_league_returns_none(reddit_create):
         assert reddit_create.get_gameplan("http://x") is None
 
 
-def test_get_gameplan_missing_league_returns_none(reddit_create):
-    """A response with no 'league' key at all is likewise invalid."""
+def test_get_gameplan_missing_league_with_fixtures_returns_none(reddit_create):
+    """Fixtures present but no 'league' key at all is likewise invalid."""
+    resp = mock.Mock()
+    resp.json.return_value = {"all": [
+        {"datum": "01.01.2026", "uhrzeit": "17:00", "heim": "GAK 1902",
+         "gast": "Rival", "heimTore": None, "gastTore": None,
+         "league": "1"}]}
+    with mock.patch.object(reddit_create.requests, "get", return_value=resp):
+        assert reddit_create.get_gameplan("http://x") is None
+
+
+def test_get_gameplan_empty_all_without_league_returns_empty(reddit_create):
+    """An empty schedule ({"all": []}) is a valid "no games" state, not an
+    error -- 'league' is only indexed inside the loop over fixtures, so a
+    missing/empty league is harmless when there's nothing to iterate."""
     resp = mock.Mock()
     resp.json.return_value = {"all": []}
     with mock.patch.object(reddit_create.requests, "get", return_value=resp):
-        assert reddit_create.get_gameplan("http://x") is None
+        assert reddit_create.get_gameplan("http://x") == []
