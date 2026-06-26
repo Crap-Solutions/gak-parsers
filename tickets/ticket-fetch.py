@@ -214,167 +214,167 @@ def generate_page(db_path, out_path, template_dir='templates'):
         out_path.write_text(html_content, encoding='utf-8')
         return False
 
-    # Get events from database (only future events)
-    events_data = db.get_events(conn)
-    if not events_data:
-        logger.info("No events found in database")
-        html_content = generate_empty_html()
-        out_path.write_text(html_content, encoding='utf-8')
+    try:
+        # Get events from database (only future events)
+        events_data = db.get_events(conn)
+        if not events_data:
+            logger.info("No events found in database")
+            html_content = generate_empty_html()
+            out_path.write_text(html_content, encoding='utf-8')
+            return False
+
+        # Parse events for template with latest sold/avail data (future events only)
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        events = []
+        for entry in events_data:
+            event_id = entry[0]
+            try:
+                event_time = dateutil.parser.parse(entry[2])
+                # Normalise to UTC before stripping tz for naive comparison;
+                # graph.py does the same. Otherwise a non-UTC offset in the API
+                # string (e.g. +01:00) shifts the future/past classification.
+                if event_time.tzinfo is not None:
+                    event_time = event_time.astimezone(datetime.timezone.utc)
+                event_time = event_time.replace(tzinfo=None)
+            except (dateutil.parser.ParserError, ValueError) as e:
+                logger.warning(f"Error parsing date for event {entry[0]}: {e}")
+                continue
+
+            # Only show future events
+            if event_time < now:
+                continue
+
+            # Get all entries for this event
+            entries = db.get_entries_for_event(conn, event_id)
+            if entries:
+                # Latest entry is the last one
+                latest = entries[-1]
+                event_data = {
+                    "title": entry[1],
+                    "id": event_id,
+                    "sold": latest[1],
+                    "avail": latest[2],
+                }
+
+                # Calculate capacity percentage from the estimated total (online
+                # sales + season tickets / sponsors / VIP) against stadium capacity.
+                total_sold = (latest[1]
+                              + EST_SEASON_TICKETS + EST_SPONSORS + EST_VIP)
+                capacity = int((total_sold / STADIUM_CAPACITY) * 100)
+                event_data["capacity_percent"] = capacity
+
+                # Calculate sales velocity
+                if len(entries) >= 2:
+                    # Get timestamps for velocity calculation
+                    timestamps = []
+                    for ent in entries:
+                        try:
+                            ts = dateutil.parser.parse(ent[3])
+                            if ts.tzinfo:
+                                ts = ts.replace(tzinfo=None)
+                            timestamps.append((ts, ent[1]))
+                        except Exception:
+                            continue
+
+                    if len(timestamps) >= 2:
+                        timestamps.sort()
+
+                        # Calculate velocity as difference between oldest and newest in each time window
+                        def get_sold_in_window(window_minutes):
+                            window_ago = now - datetime.timedelta(minutes=window_minutes)
+                            window_entries = [s for t, s in timestamps if t >= window_ago]
+                            if len(window_entries) >= 2:
+                                return max(window_entries) - min(window_entries)
+                            return 0
+
+                        ten_min_sold = get_sold_in_window(10)
+                        one_hour_sold = get_sold_in_window(60)
+                        one_day_sold = get_sold_in_window(1440)
+
+                        velocity_parts = []
+                        if one_day_sold > 0:
+                            velocity_parts.append(f"{one_day_sold} tickets in last day")
+                        if one_hour_sold > 0:
+                            velocity_parts.append(f"{one_hour_sold} in last hour")
+                        if ten_min_sold > 0:
+                            velocity_parts.append(f"{ten_min_sold} in last 10min")
+
+                        if velocity_parts:
+                            event_data["velocity"] = " | ".join(velocity_parts)
+
+                events.append(event_data)
+
+        if not events:
+            logger.info("No future events to display")
+            html_content = generate_empty_html()
+            out_path.write_text(html_content, encoding='utf-8')
+            return False
+
+        # Fetch past events (from current season - July onwards). Reuse the same
+        # read-only connection and the event list already fetched above; nothing
+        # was written so it is still current.
+        # Get current year, if we're before July, use last year's July
+        current_year = now.year
+        if now.month < 7:
+            season_start = datetime.datetime(current_year - 1, 7, 1)
+        else:
+            season_start = datetime.datetime(current_year, 7, 1)
+
+        past_events = []
+        for entry in events_data:
+            event_id = entry[0]
+            try:
+                event_time = dateutil.parser.parse(entry[2])
+                if event_time.tzinfo is not None:
+                    event_time = event_time.astimezone(datetime.timezone.utc)
+                event_time = event_time.replace(tzinfo=None)
+            except (dateutil.parser.ParserError, ValueError):
+                continue
+
+            # Only past events from current season
+            if event_time >= now or event_time < season_start:
+                continue
+
+            # Get latest entry for this event
+            entries = db.get_entries_for_event(conn, event_id)
+            if entries:
+                latest = entries[-1]
+                # Extract away team name (remove "GAK 1902 : " prefix)
+                title = entry[1]
+                if " : " in title:
+                    title = title.split(" : ", 1)[1]
+                # Generate mini graph for this event
+                mini_graph = generate_mini_graph(event_id, event_time, conn)
+                past_events.append({
+                    "title": title,
+                    "date": event_time.strftime('%Y-%m-%d'),
+                    "sold": latest[1],
+                    "graph": mini_graph,
+                    "event_id": event_id,
+                })
+
+        # Sort by sold descending for ranking
+        past_events.sort(key=lambda x: x['sold'], reverse=True)
+
+        # Add rankings and mark top 3
+        for i, event in enumerate(past_events):
+            event['rank'] = i + 1
+            if i < 3:
+                event['top_performer'] = True
+
+        # Re-sort by date for display
+        past_events.sort(key=lambda x: x['date'], reverse=True)
+
+        # Create season summary
+        if past_events:
+            total_sold = sum(e['sold'] for e in past_events)
+            avg_sold = total_sold // len(past_events)
+            season_summary = f"{len(past_events)} matches this season, average {avg_sold} tickets sold"
+        else:
+            season_summary = None
+
+    finally:
         conn.close()
-        return False
-
-    # Parse events for template with latest sold/avail data (future events only)
-    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    events = []
-    for entry in events_data:
-        event_id = entry[0]
-        try:
-            event_time = dateutil.parser.parse(entry[2])
-            # Normalise to UTC before stripping tz for naive comparison;
-            # graph.py does the same. Otherwise a non-UTC offset in the API
-            # string (e.g. +01:00) shifts the future/past classification.
-            if event_time.tzinfo is not None:
-                event_time = event_time.astimezone(datetime.timezone.utc)
-            event_time = event_time.replace(tzinfo=None)
-        except (dateutil.parser.ParserError, ValueError) as e:
-            logger.warning(f"Error parsing date for event {entry[0]}: {e}")
-            continue
-
-        # Only show future events
-        if event_time < now:
-            continue
-
-        # Get all entries for this event
-        entries = db.get_entries_for_event(conn, event_id)
-        if entries:
-            # Latest entry is the last one
-            latest = entries[-1]
-            event_data = {
-                "title": entry[1],
-                "id": event_id,
-                "sold": latest[1],
-                "avail": latest[2],
-            }
-
-            # Calculate capacity percentage from the estimated total (online
-            # sales + season tickets / sponsors / VIP) against stadium capacity.
-            total_sold = (latest[1]
-                          + EST_SEASON_TICKETS + EST_SPONSORS + EST_VIP)
-            capacity = int((total_sold / STADIUM_CAPACITY) * 100)
-            event_data["capacity_percent"] = capacity
-
-            # Calculate sales velocity
-            if len(entries) >= 2:
-                # Get timestamps for velocity calculation
-                timestamps = []
-                for ent in entries:
-                    try:
-                        ts = dateutil.parser.parse(ent[3])
-                        if ts.tzinfo:
-                            ts = ts.replace(tzinfo=None)
-                        timestamps.append((ts, ent[1]))
-                    except Exception:
-                        continue
-
-                if len(timestamps) >= 2:
-                    timestamps.sort()
-
-                    # Calculate velocity as difference between oldest and newest in each time window
-                    def get_sold_in_window(window_minutes):
-                        window_ago = now - datetime.timedelta(minutes=window_minutes)
-                        window_entries = [s for t, s in timestamps if t >= window_ago]
-                        if len(window_entries) >= 2:
-                            return max(window_entries) - min(window_entries)
-                        return 0
-
-                    ten_min_sold = get_sold_in_window(10)
-                    one_hour_sold = get_sold_in_window(60)
-                    one_day_sold = get_sold_in_window(1440)
-
-                    velocity_parts = []
-                    if one_day_sold > 0:
-                        velocity_parts.append(f"{one_day_sold} tickets in last day")
-                    if one_hour_sold > 0:
-                        velocity_parts.append(f"{one_hour_sold} in last hour")
-                    if ten_min_sold > 0:
-                        velocity_parts.append(f"{ten_min_sold} in last 10min")
-
-                    if velocity_parts:
-                        event_data["velocity"] = " | ".join(velocity_parts)
-
-            events.append(event_data)
-
-    if not events:
-        logger.info("No future events to display")
-        html_content = generate_empty_html()
-        out_path.write_text(html_content, encoding='utf-8')
-        conn.close()
-        return False
-
-    # Fetch past events (from current season - July onwards). Reuse the same
-    # read-only connection and the event list already fetched above; nothing
-    # was written so it is still current.
-    # Get current year, if we're before July, use last year's July
-    current_year = now.year
-    if now.month < 7:
-        season_start = datetime.datetime(current_year - 1, 7, 1)
-    else:
-        season_start = datetime.datetime(current_year, 7, 1)
-
-    past_events = []
-    for entry in events_data:
-        event_id = entry[0]
-        try:
-            event_time = dateutil.parser.parse(entry[2])
-            if event_time.tzinfo is not None:
-                event_time = event_time.astimezone(datetime.timezone.utc)
-            event_time = event_time.replace(tzinfo=None)
-        except (dateutil.parser.ParserError, ValueError):
-            continue
-
-        # Only past events from current season
-        if event_time >= now or event_time < season_start:
-            continue
-
-        # Get latest entry for this event
-        entries = db.get_entries_for_event(conn, event_id)
-        if entries:
-            latest = entries[-1]
-            # Extract away team name (remove "GAK 1902 : " prefix)
-            title = entry[1]
-            if " : " in title:
-                title = title.split(" : ", 1)[1]
-            # Generate mini graph for this event
-            mini_graph = generate_mini_graph(event_id, event_time, conn)
-            past_events.append({
-                "title": title,
-                "date": event_time.strftime('%Y-%m-%d'),
-                "sold": latest[1],
-                "graph": mini_graph,
-                "event_id": event_id,
-            })
-
-    # Sort by sold descending for ranking
-    past_events.sort(key=lambda x: x['sold'], reverse=True)
-
-    # Add rankings and mark top 3
-    for i, event in enumerate(past_events):
-        event['rank'] = i + 1
-        if i < 3:
-            event['top_performer'] = True
-
-    # Re-sort by date for display
-    past_events.sort(key=lambda x: x['date'], reverse=True)
-
-    # Create season summary
-    if past_events:
-        total_sold = sum(e['sold'] for e in past_events)
-        avg_sold = total_sold // len(past_events)
-        season_summary = f"{len(past_events)} matches this season, average {avg_sold} tickets sold"
-    else:
-        season_summary = None
-
-    conn.close()
 
     # Generate graph
     try:
