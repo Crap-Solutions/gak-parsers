@@ -97,6 +97,37 @@ def _seed_future_event_with_entries(mod, db_path, entries):
     conn.close()
 
 
+def test_generate_page_default_templates_works_from_any_cwd(ticket_fetch, tmp_path, monkeypatch):
+    """generate_page must find its templates regardless of the process CWD.
+
+    Regression: the default ``template_dir`` was the relative ``'templates'``,
+    resolved against the CWD. Cron runs with CWD=$HOME, so jinja's
+    FileSystemLoader looked in ``~/templates`` and raised
+    ``TemplateNotFound('ticket-html.tmpl')``, which the render handler caught
+    and turned into a silent fallback *error* page (exit 0, no cron mail) --
+    breaking the public ticket-watch page the first time a future event
+    appeared. Templates ship next to the script, so a relative template dir
+    must anchor on the script directory, not the CWD.
+    """
+    db_path = tmp_path / "cwd.db"
+    _seed_future_event(ticket_fetch, db_path)
+    monkeypatch.setattr(ticket_fetch.graph, "generate_graph", lambda path: "STUB")
+    # Run from an unrelated directory that contains no 'templates/'.
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+
+    out = tmp_path / "index.html"
+    # Rely on the DEFAULT template_dir (no third arg) -- the buggy path.
+    result = ticket_fetch.generate_page(db_path, out)
+
+    assert result is True, "generate_page fell back instead of rendering"
+    html = out.read_text(encoding="utf-8")
+    assert "ticket watch - ERROR" not in html, \
+        f"generate page emitted the fallback error page from CWD {other}: {html}"
+    assert "main-graph" in html, "the real template did not render"
+
+
 def test_velocity_window_normalises_offset_timestamps(ticket_fetch, tmp_path, monkeypatch):
     """Velocity windows compare against a UTC-naive `now`, so offset timestamps
     must be converted to UTC before the naive strip -- not stripped in place.

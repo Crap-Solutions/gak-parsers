@@ -398,7 +398,14 @@ def generate_page(db_path, out_path, template_dir='templates'):
 
     # Render HTML
     try:
+        # Anchor a relative template dir on this script's location, not the
+        # process CWD. The templates ship alongside the script, but cron runs
+        # with CWD=$HOME, so the bare 'templates' default used to resolve to
+        # ~/templates and raise TemplateNotFound('ticket-html.tmpl') -- which
+        # the handler below swallowed into a silent fallback error page.
         templ_path = Path(template_dir)
+        if not templ_path.is_absolute():
+            templ_path = Path(__file__).resolve().parent / templ_path
         jenv = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(templ_path)),
             autoescape=jinja2.select_autoescape(['html', 'tmpl']))
