@@ -38,6 +38,11 @@ def fetch_events(base_url, events_ep, timeout=REQUEST_TIMEOUT):
     if not isinstance(data, list):
         raise FetchError(
             f"Expected list from events API, got {type(data).__name__}")
+    for index, event in enumerate(data):
+        if not isinstance(event, dict):
+            raise FetchError(
+                f"Expected object at events API index {index}, got "
+                f"{type(event).__name__}")
 
     return data
 

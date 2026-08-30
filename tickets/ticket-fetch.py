@@ -542,7 +542,13 @@ def _within_grace(state_path, grace_seconds, now=None):
     if grace_seconds <= 0:
         return False
     now = now or datetime.datetime.now(datetime.timezone.utc)
+    # A missing file starts a new outage. An existing but malformed file must
+    # fail safe instead of resetting the grace period indefinitely.
+    state_exists = state_path.exists()
     since = _read_failure_since(state_path)
+    if since is None and state_exists:
+        logger.warning(f"Invalid failure state {state_path}; alerting")
+        return False
     if since is None:
         try:
             state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -557,14 +563,36 @@ def _within_grace(state_path, grace_seconds, now=None):
     return (now - since).total_seconds() < grace_seconds
 
 
+def _alerted_state_path(state_path):
+    """Return the marker recording that this outage already triggered mail."""
+    return Path(str(state_path) + ".alerted")
+
+
+def _suppress_failure_alert(state_path, grace_seconds):
+    """Suppress failures during grace and after the outage's first alert."""
+    if _within_grace(state_path, grace_seconds):
+        return True
+    marker = _alerted_state_path(state_path)
+    try:
+        if marker.exists():
+            return True
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                          encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Cannot write alert marker {marker}: {e}; alerting")
+    return False
+
+
 def _clear_failure_state(state_path):
     """Clear the outage state after a successful fetch (server is back up)."""
-    try:
-        state_path.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.warning(f"Could not clear failure state {state_path}: {e}")
+    for path in (state_path, _alerted_state_path(state_path)):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning(f"Could not clear failure state {path}: {e}")
 
 
 def _log_to_file_only(level, msg):
@@ -671,7 +699,7 @@ def main():
         events_data = api.fetch_events(base_url, events_ep, args.timeout)
     except api.FetchError as e:
         msg = f"Failed to fetch events: {e}"
-        if _within_grace(state_path, grace_seconds):
+        if _suppress_failure_alert(state_path, grace_seconds):
             # Transient upstream blip: record on disk only (not stdout, which
             # would mail cron) and keep serving the last good page instead of
             # overwriting it every 5 minutes. Alert once it persists ~24h.
@@ -687,10 +715,8 @@ def main():
             out_path.write_text(generate_error_html(msg), encoding='utf-8')
         sys.exit(1)
 
-    # Server responded (even with an empty list): any outage is over.
-    _clear_failure_state(state_path)
-
     if not events_data:
+        _clear_failure_state(state_path)
         logger.info("No events found from API")
         if args.generate:
             html_content = generate_empty_html()
@@ -699,24 +725,38 @@ def main():
 
     # Process events
     events_updated = 0
+    event_failures = []
     for event in events_data:
+        if not isinstance(event, dict):
+            msg = ("Invalid event item from API: expected object, got "
+                   f"{type(event).__name__}")
+            _log_to_file_only(logging.ERROR, msg)
+            event_failures.append(msg)
+            continue
         event_id = event.get("id")
         if not event_id:
-            logger.warning("Event missing ID, skipping")
+            msg = "Event missing ID"
+            _log_to_file_only(logging.ERROR, f"{msg}, skipping")
+            event_failures.append(msg)
             continue
 
         try:
             content = api.fetch_event_details(base_url, event_id, args.timeout)
         except api.FetchError as e:
-            logger.error(f"{e}; skipping")
+            _log_to_file_only(logging.ERROR, f"{e}; skipping")
+            event_failures.append(str(e))
             continue
 
         parsed = api.parse_event_data(event, content)
         if parsed:
             if db.update_event(conn, event, parsed):
                 events_updated += 1
+            else:
+                event_failures.append(f"Failed to store event {event_id}")
         else:
-            logger.error(f"Failed to parse event {event_id}, skipping")
+            _log_to_file_only(
+                logging.ERROR, f"Failed to parse event {event_id}, skipping")
+            event_failures.append(f"Failed to parse event {event_id}")
 
     conn.commit()
     # Bound ENTRIES growth: trim samples older than the retention window.
@@ -725,6 +765,23 @@ def main():
     if pruned:
         logger.info(f"Pruned {pruned} old entr{'y' if pruned == 1 else 'ies'}")
     conn.close()
+
+    if event_failures:
+        msg = (f"Incomplete event fetch: {len(event_failures)} of "
+               f"{len(events_data)} event(s) failed")
+        if _suppress_failure_alert(state_path, grace_seconds):
+            _log_to_file_only(logging.ERROR, msg)
+            logger.info("Event-detail fetch incomplete; suppressing repeat cron email")
+            if args.generate and not out_path.exists():
+                out_path.write_text(generate_error_html(msg), encoding='utf-8')
+            sys.exit(0)
+        logger.error(msg)
+        if args.generate:
+            out_path.write_text(generate_error_html(msg), encoding='utf-8')
+        sys.exit(1)
+
+    # Only a complete list + detail fetch ends an outage.
+    _clear_failure_state(state_path)
 
     logger.info(f"Updated {events_updated} event(s)")
 
