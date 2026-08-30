@@ -21,7 +21,8 @@ def generate_graph(db_path):
     conn = None
     try:
         # Import here to avoid a circular import.
-        from .db import open_connection, get_events_for_graph
+        from .db import (open_connection, get_entries_for_event,
+                         get_events_for_graph)
         conn = open_connection(db_path, read_only=True)
         events = get_events_for_graph(conn)
 
@@ -58,10 +59,24 @@ def generate_graph(db_path):
         # Collect final sales numbers for average calculation
         final_sales = []
 
+        # "Now" as naive UTC for the past/future classification, matching the
+        # normalisation convention in ticket-fetch.py (API datetimes are made
+        # UTC-aware, then naive) so an offset like +02:00 doesn't skew it.
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
         for event in parsed_events:
+            # The average line must reflect *final* attendance figures, which
+            # only past events have -- future events' tallies are still
+            # climbing, so including them would drag the average down.
+            event_time = event['time']
+            if event_time.tzinfo is not None:
+                event_time = event_time.astimezone(datetime.timezone.utc)
+            is_past = event_time.replace(tzinfo=None) < now
+
             try:
-                cur = conn.execute("SELECT * FROM ENTRIES WHERE MATCH=?", (event['id'],))
-                entries = cur.fetchall()
+                # Ordered oldest-first by db.get_entries_for_event, so sold[-1]
+                # below is genuinely the latest sample.
+                entries = get_entries_for_event(conn, event['id'])
 
                 hours = []
                 sold = []
@@ -83,8 +98,10 @@ def generate_graph(db_path):
 
                 if hours and sold:
                     matplotlib.pyplot.plot(hours, sold, label=event['title'])
-                    # Collect final sales number (last entry)
-                    final_sales.append(sold[-1])
+                    # Collect final sales number (last entry) -- past events
+                    # only, see is_past above.
+                    if is_past:
+                        final_sales.append(sold[-1])
 
             except sqlite3.Error as e:
                 logger.error(f"Database error while fetching entries for {event['id']}: {e}")
