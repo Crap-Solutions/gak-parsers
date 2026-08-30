@@ -94,3 +94,44 @@ def test_generate_graph_closes_figure_on_exception(tmp_path, monkeypatch):
 
     assert graph.generate_graph(str(tmp_path / "g.db")) is None
     assert plt.get_fignums() == [], f"leaked figures: {plt.get_fignums()}"
+
+
+def test_average_line_uses_past_events_only(tmp_path, monkeypatch):
+    """The 'Average' line must average final sales of past events only.
+
+    get_events_for_graph deliberately includes future events (their sales
+    curves are plotted), but their tallies are still climbing -- averaging
+    them in drags the line down. Seed one past event (final sales 100) and
+    one future event (partial tally 900): the average must be 100, not 500.
+    """
+    conn = db.init_db(str(tmp_path / "g.db"))
+    for event_id, title, when in (
+            ("evt_past", "GAK 1902 : Past", "2020-01-01T20:00:00+00:00"),
+            ("evt_future", "GAK 1902 : Future", "2099-01-01T20:00:00+00:00")):
+        conn.execute(
+            "INSERT INTO EVENTS (ID,TITLE,DATETIME,SELLFROM,SELLTO) "
+            "VALUES (?,?,?,?,?)",
+            (event_id, title, when, when, when))
+    for event_id, samples in (
+            ("evt_past", (("2020-01-01T10:00:00+00:00", 10),
+                          ("2020-01-01T18:00:00+00:00", 100))),
+            ("evt_future", (("2098-12-31T10:00:00+00:00", 500),
+                            ("2099-01-01T10:00:00+00:00", 900)))):
+        for ts, sold in samples:
+            conn.execute(
+                "INSERT INTO ENTRIES (MATCH,SOLD,AVAILABLE,TIMESTAMP) "
+                "VALUES (?,?,?,?)", (event_id, sold, 0, ts))
+    conn.commit()
+    conn.close()
+
+    seen = {}
+
+    def record_axhline(y=0, **kwargs):
+        seen["y"] = y
+
+    monkeypatch.setattr(graph.matplotlib.pyplot, "axhline", record_axhline)
+
+    img = graph.generate_graph(str(tmp_path / "g.db"))
+    assert img is not None, "graph should still render with both events"
+    assert seen.get("y") == 100, \
+        f"average must use past events' final sales only, got {seen.get('y')}"

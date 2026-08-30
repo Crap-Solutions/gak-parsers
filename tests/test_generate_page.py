@@ -172,3 +172,42 @@ def test_velocity_window_normalises_offset_timestamps(ticket_fetch, tmp_path, mo
     # we assert specifically on the 10-min term.)
     assert "in last 10min" not in html, \
         f"spurious 10-min velocity from mis-compared offset timestamps: {html}"
+
+
+def test_last_updated_vienna_fallback_with_utc_machine_value(ticket_fetch, tmp_path, monkeypatch):
+    """'Last updated': ISO-UTC machine value for the enhancer, Vienna fallback.
+
+    The page is static HTML, so the visitor's timezone can only be applied
+    client-side by the template's inline enhancer script, which rewrites the
+    text from the machine-readable UTC datetime attribute. The server-rendered
+    fallback -- what no-JS visitors see -- must be Europe/Vienna local time,
+    not UTC. Frozen at 2099-01-01T10:05 UTC: January means CET (UTC+1), so the
+    fallback must read 11:05:00 while the machine value stays 10:05Z.
+    """
+    db_path = tmp_path / "lu.db"
+    _seed_future_event(ticket_fetch, db_path)
+    monkeypatch.setattr(ticket_fetch.graph, "generate_graph", lambda path: "STUB")
+
+    real_datetime_cls = ticket_fetch.datetime.datetime
+
+    class Frozen(real_datetime_cls):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return real_datetime_cls(2099, 1, 1, 10, 5, 0, tzinfo=tz)
+            return real_datetime_cls(2099, 1, 1, 10, 5, 0)
+
+    monkeypatch.setattr(ticket_fetch.datetime, "datetime", Frozen)
+
+    out = tmp_path / "index.html"
+    templates = Path(ticket_fetch.__file__).parent / "templates"
+    assert ticket_fetch.generate_page(db_path, out, str(templates)) is True
+    html = out.read_text(encoding="utf-8")
+
+    # Machine value for the client-side enhancer: exact UTC ISO-8601.
+    assert 'datetime="2099-01-01T10:05:00Z"' in html
+    # Server-rendered fallback: Europe/Vienna (CET = UTC+1 in January).
+    assert "2099-01-01 11:05:00" in html
+    assert "2099-01-01 10:05:00" not in html, "fallback must not be UTC"
+    # The enhancer that localises the stamp for JS-capable visitors.
+    assert "getElementById('last-updated')" in html

@@ -13,6 +13,7 @@ import traceback
 import base64
 import datetime
 import dateutil.parser
+import zoneinfo
 from pathlib import Path
 
 # gak_common lives at the repo root (one level up from this script).
@@ -50,6 +51,12 @@ EST_VIP = 296               # VIP allocation
 EST_EXTRA = 393             # extra allocation in the "w/ est." breakdown line
 EST_DEDUCT = 2864           # deducted in the "w/o est. season tickets" line
 STADIUM_CAPACITY = 15000    # denominator for the %-of-capacity bar
+
+# Fallback display timezone for the public page's "Last updated" stamp. The
+# page is static (cron-rendered), so the visitor's timezone can only be
+# applied client-side by the inline enhancer script in the template; without
+# JS the stamp shows in this timezone instead of UTC.
+VIENNA_TZ = zoneinfo.ZoneInfo("Europe/Vienna")
 
 
 def generate_error_html(error_message, last_successful_run=None):
@@ -224,7 +231,8 @@ def generate_page(db_path, out_path, template_dir='templates'):
             return False
 
         # Parse events for template with latest sold/avail data (future events only)
-        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now = now_utc.replace(tzinfo=None)
         events = []
         for entry in events_data:
             event_id = entry[0]
@@ -411,12 +419,18 @@ def generate_page(db_path, out_path, template_dir='templates'):
             autoescape=jinja2.select_autoescape(['html', 'tmpl']))
         ticket_tmpl = jenv.get_template("ticket-html.tmpl")
 
-        # Last updated timestamp
-        last_updated = now.strftime('%Y-%m-%d %H:%M:%S')
+        # Last updated stamp. The page is static HTML, so the visitor's
+        # timezone cannot be resolved server-side: emit an ISO-8601 UTC
+        # machine value for the template's inline enhancer (which rewrites
+        # the text in the visitor's local timezone when JS is available),
+        # and a Vienna-rendered string as the no-JS fallback.
+        last_updated_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        last_updated = now_utc.astimezone(VIENNA_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
         html_content = ticket_tmpl.render(
             events=events, img=img, past_events=past_events,
             season_summary=season_summary, last_updated=last_updated,
+            last_updated_iso=last_updated_iso,
             EST_SEASON_TICKETS=EST_SEASON_TICKETS, EST_SPONSORS=EST_SPONSORS,
             EST_VIP=EST_VIP, EST_EXTRA=EST_EXTRA, EST_DEDUCT=EST_DEDUCT)
 

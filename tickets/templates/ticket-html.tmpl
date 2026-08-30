@@ -219,8 +219,23 @@
 {% endif %}
 
 <div class="last-updated">
-    Last updated: {{last_updated}}
+    Last updated: <time id="last-updated" datetime="{{last_updated_iso}}">{{last_updated}}</time>
 </div>
+
+<script>
+/* Progressive enhancement: rewrite the "Last updated" stamp in the visitor's
+   own timezone (their browser resolves the machine-readable UTC datetime
+   attribute above). Without JS the server-rendered Europe/Vienna time stays
+   visible, so there is no dependency on this script. */
+(function () {
+    var el = document.getElementById('last-updated');
+    var t = new Date(el.getAttribute('datetime'));
+    if (!isNaN(t.getTime())) {
+        el.textContent = t.toLocaleString(undefined,
+            {dateStyle: 'medium', timeStyle: 'medium'});
+    }
+})();
+</script>
 
 <div class="footer">
     <a href="https://crap.solutions/pages/about.html">Impressum</a>
