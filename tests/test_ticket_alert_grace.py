@@ -104,13 +104,16 @@ def test_failure_past_window_alerts(ticket_fetch, tmp_path):
     assert ticket_fetch._within_grace(state, 24 * 3600, now=now) is False
 
 
-def test_corrupt_state_treated_as_fresh_outage(ticket_fetch, tmp_path):
+def test_corrupt_state_fails_safe_and_alerts(ticket_fetch, tmp_path, caplog):
     state = tmp_path / "s"
     state.write_text("not a timestamp", encoding="utf-8")
     now = datetime.datetime.now(datetime.timezone.utc)
-    # garbage -> treated as no prior outage -> new outage -> within grace
-    assert ticket_fetch._within_grace(state, 3600, now=now) is True
-    assert ticket_fetch._read_failure_since(state) == now  # overwritten cleanly
+    # garbage -> indistinguishable from tampering -> alert now (fail safe),
+    # and the file is never silently rewritten to restart the grace window
+    with caplog.at_level(logging.WARNING, logger="ticket_fetch"):
+        assert ticket_fetch._within_grace(state, 3600, now=now) is False
+    assert "Invalid failure state" in caplog.text
+    assert state.read_text(encoding="utf-8") == "not a timestamp"
 
 
 def test_unwritable_state_fails_safe_to_alert(ticket_fetch, tmp_path):
@@ -122,14 +125,45 @@ def test_unwritable_state_fails_safe_to_alert(ticket_fetch, tmp_path):
 
 
 # --------------------------------------------------------------------------
+# _suppress_failure_alert: grace now, mail once per outage
+# --------------------------------------------------------------------------
+
+def test_suppress_first_failure_within_grace(ticket_fetch, tmp_path):
+    state = tmp_path / "s"
+    assert ticket_fetch._suppress_failure_alert(state, 3600) is True
+    assert not ticket_fetch._alerted_state_path(state).exists()
+
+
+def test_suppress_past_grace_alerts_and_stamps_marker(ticket_fetch, tmp_path):
+    state = tmp_path / "s"
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)
+    state.write_text(since.isoformat(), encoding="utf-8")
+    assert ticket_fetch._suppress_failure_alert(state, 24 * 3600) is False
+    assert ticket_fetch._alerted_state_path(state).exists()
+
+
+def test_failure_after_first_alert_stays_suppressed(ticket_fetch, tmp_path):
+    # "mail once": after the sustained-outage email went out, further cron
+    # runs must not re-alert until recovery clears the marker
+    state = tmp_path / "s"
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)
+    state.write_text(since.isoformat(), encoding="utf-8")
+    ticket_fetch._alerted_state_path(state).write_text("alerted", encoding="utf-8")
+    assert ticket_fetch._suppress_failure_alert(state, 24 * 3600) is True
+
+
+# --------------------------------------------------------------------------
 # _clear_failure_state
 # --------------------------------------------------------------------------
 
-def test_clear_failure_state_removes_file(ticket_fetch, tmp_path):
+def test_clear_failure_state_removes_file_and_marker(ticket_fetch, tmp_path):
     state = tmp_path / "s"
     state.write_text("x")
+    marker = ticket_fetch._alerted_state_path(state)
+    marker.write_text("x")
     ticket_fetch._clear_failure_state(state)
     assert not state.exists()
+    assert not marker.exists()
 
 
 def test_clear_failure_state_missing_is_fine(ticket_fetch, tmp_path):
@@ -228,6 +262,14 @@ def test_fetch_events_non_list_raises_fetcherror(monkeypatch):
         api.fetch_events("https://x/", "ep")
 
 
+def test_fetch_events_malformed_item_raises_fetcherror(monkeypatch):
+    # a null/string element must fail the fetch here, not crash main()
+    # later with an AttributeError while bypassing the outage handling
+    _patch_get(monkeypatch, response=_FakeResponse(json_data=[{"id": "a"}, None]))
+    with pytest.raises(FetchError, match="Expected object at events API index 1"):
+        api.fetch_events("https://x/", "ep")
+
+
 def test_fetch_event_details_success(monkeypatch):
     _patch_get(monkeypatch, response=_FakeResponse(json_data={"ok": True}))
     assert api.fetch_event_details("https://x/", "evt") == {"ok": True}
@@ -253,8 +295,11 @@ def test_fetch_events_does_not_log_to_stdout_on_failure(monkeypatch, caplog):
 # main(): grace wiring (side effects, not stdout capture)
 # --------------------------------------------------------------------------
 
-def _run_main(ticket_fetch, monkeypatch, tmp_path, argv, fetch_impl):
+def _run_main(ticket_fetch, monkeypatch, tmp_path, argv, fetch_impl,
+              details_impl=None):
     monkeypatch.setattr(ticket_fetch.api, "fetch_events", fetch_impl)
+    if details_impl is not None:
+        monkeypatch.setattr(ticket_fetch.api, "fetch_event_details", details_impl)
     monkeypatch.setattr(sys, "argv", ["ticket-fetch.py"] + argv)
     monkeypatch.delenv("GAK_ALERT_GRACE", raising=False)
     try:
@@ -321,3 +366,103 @@ def test_main_successful_fetch_clears_failure_state(
                      lambda *a, **k: [])
     assert code == 0
     assert not state.exists()                       # outage state cleared
+
+
+def test_main_partial_detail_failure_within_grace_suppressed(
+        ticket_fetch, monkeypatch, tmp_path):
+    """Detail-endpoint failures are outages too: suppress, keep last good page."""
+    db = tmp_path / "events.db"
+    out = tmp_path / "index.html"
+    out.write_text("GOOD PAGE", encoding="utf-8")
+    state = ticket_fetch._failure_state_path(db)
+
+    def details_boom(*a, **k):
+        raise ticket_fetch.api.FetchError("503 detail outage")
+
+    code = _run_main(ticket_fetch, monkeypatch, tmp_path,
+                     ["--db", str(db), "--output", str(out), "--generate",
+                      "--log", str(tmp_path / "fetch.log")],
+                     lambda *a, **k: [{"id": "evt1", "title": "Match"}],
+                     details_impl=details_boom)
+    assert code == 0                               # within grace: no cron email
+    assert out.read_text() == "GOOD PAGE"          # last good page preserved
+    assert state.exists()                          # outage start recorded
+
+
+def test_main_sustained_partial_failure_alerts_once(
+        ticket_fetch, monkeypatch, tmp_path):
+    """Past the grace window, partial failures alert exactly once."""
+    db = tmp_path / "events.db"
+    out = tmp_path / "index.html"
+    out.write_text("GOOD PAGE", encoding="utf-8")
+    state = ticket_fetch._failure_state_path(db)
+    # outage started 25h ago -> past the 24h default grace, already alerted
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)
+    state.write_text(since.isoformat(), encoding="utf-8")
+    marker = ticket_fetch._alerted_state_path(state)
+
+    def details_boom(*a, **k):
+        raise ticket_fetch.api.FetchError("503 detail outage")
+
+    argv = ["--db", str(db), "--output", str(out), "--generate",
+            "--log", str(tmp_path / "fetch.log")]
+    events = lambda *a, **k: [{"id": "evt1", "title": "Match"}]
+
+    code = _run_main(ticket_fetch, monkeypatch, tmp_path, argv, events,
+                     details_impl=details_boom)
+    assert code == 1                               # sustained outage: alert
+    assert "Error" in out.read_text()              # page replaced
+    assert marker.exists()                         # alert remembered
+
+    code = _run_main(ticket_fetch, monkeypatch, tmp_path, argv, events,
+                     details_impl=details_boom)
+    assert code == 0                               # mail once: no repeat alert
+
+
+def test_main_full_recovery_clears_state_and_marker(
+        ticket_fetch, monkeypatch, tmp_path):
+    """A complete list+detail run ends the outage: state and marker cleared."""
+    db = tmp_path / "events.db"
+    out = tmp_path / "index.html"
+    state = ticket_fetch._failure_state_path(db)
+    state.write_text(
+        (datetime.datetime.now(datetime.timezone.utc)
+         - datetime.timedelta(hours=25)).isoformat(),
+        encoding="utf-8")
+    marker = ticket_fetch._alerted_state_path(state)
+    marker.write_text("alerted", encoding="utf-8")
+
+    # page rendering is covered by test_generate_page.py; stub it here
+    monkeypatch.setattr(ticket_fetch, "generate_page", lambda *a, **k: True)
+
+    code = _run_main(ticket_fetch, monkeypatch, tmp_path,
+                     ["--db", str(db), "--output", str(out), "--generate",
+                      "--log", str(tmp_path / "fetch.log")],
+                     lambda *a, **k: [{"id": "evt1", "title": "Match",
+                                       "dateTimeFrom": "2099-01-01T00:00:00",
+                                       "publiclyAvailableFrom": "2099-01-01T00:00:00",
+                                       "publiclyAvailableTo": "2099-01-01T20:00:00"}],
+                     details_impl=lambda *a, **k:
+                         {"sectorRepresentationConfigurations": []})
+    assert code == 0
+    assert not state.exists()                      # outage over
+    assert not marker.exists()                     # next outage can alert
+
+
+def test_main_malformed_event_item_is_an_outage_not_a_crash(
+        ticket_fetch, monkeypatch, tmp_path):
+    """A malformed events-list item must route into outage handling, not die
+    with an AttributeError before the error page can be served."""
+    db = tmp_path / "events.db"
+    out = tmp_path / "index.html"
+    out.write_text("GOOD PAGE", encoding="utf-8")
+    state = ticket_fetch._failure_state_path(db)
+
+    # simulate the api-layer validation being bypassed or refactored away
+    code = _run_main(ticket_fetch, monkeypatch, tmp_path,
+                     ["--db", str(db), "--output", str(out), "--generate",
+                      "--log", str(tmp_path / "fetch.log")],
+                     lambda *a, **k: ["garbage"])
+    assert code == 0                               # first occurrence: in grace
+    assert out.read_text() == "GOOD PAGE"          # last good page preserved
+    assert state.exists()
