@@ -9,10 +9,14 @@ Collection of tools for GAK 1902 (Grazer Athletiksport-Klub).
 Automated Reddit moderation for r/grazerak:
 
 - **reddit-create.py**: Updates subreddit sidebar and game plan sticky posts
-  - Fetches league table from 2liga.at
+  - Fetches league table from grazerak.at
   - Fetches game schedule from grazerak.at
   - Uses Jinja2 templates for content rendering
   - Updates sidebar via PRAW API
+  - Gameplan-feed outages are quiet for the first 24h (file log only,
+    exit 0), then alert via cron mail at most once a day until the feed
+    recovers (`output/gameplan.failstate` tracks the outage; corrupt or
+    unwritable state fails safe = alert)
 
 **Usage:**
 ```bash
